@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/krisukox/google-flights-api/flights"
+	"github.com/b3r1itzx/google-flights-api/flights"
 )
 
 type airport struct {

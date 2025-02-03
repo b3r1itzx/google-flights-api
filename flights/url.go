@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/krisukox/google-flights-api/flights/internal/urlpb"
+	"github.com/b3r1itzx/google-flights-api/flights/internal/urlpb"
 	"google.golang.org/protobuf/proto"
 )
 

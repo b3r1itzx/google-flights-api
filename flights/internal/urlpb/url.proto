@@ -1,7 +1,7 @@
 syntax = "proto3";
 package urlpb;
 
-option go_package = "github.com/krisukox/google-flights-api/flights/internal/urlpb";
+option go_package = "github.com/b3r1itzx/google-flights-api/flights/internal/urlpb";
 
 message Url {
     enum Stops {

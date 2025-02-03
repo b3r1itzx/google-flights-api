@@ -1,4 +1,4 @@
-module github.com/krisukox/google-flights-api
+module github.com/b3r1itzx/google-flights-api
 
 go 1.20
 

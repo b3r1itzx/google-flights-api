@@ -4,7 +4,10 @@ package flights
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +47,8 @@ type Session struct {
 
 	client  httpClient
 	cookies []string
+	fsid    string
+	bl      string
 }
 
 func customRetryPolicy() func(ctx context.Context, resp *http.Response, err error) (bool, error) {
@@ -57,6 +62,36 @@ func customRetryPolicy() func(ctx context.Context, resp *http.Response, err erro
 		}
 		return retryablehttp.DefaultRetryPolicy(ctx, resp, err)
 	}
+}
+
+var (
+	fsidRe = regexp.MustCompile(`"FdrFJe":"(-?\d+)"`)
+	blRe   = regexp.MustCompile(`"cfb2h":"(boq_[a-z0-9_.\-]+)"`)
+)
+
+// fetchBuildInfo fetches the Google Flights page and extracts the build label
+// (bl) and session id (f.sid) embedded in the HTML. Google rotates these
+// values periodically, so resolving them at session-init time keeps the client
+// from breaking when the values change upstream. Returns empty strings on a
+// best-effort basis — the underlying RPC endpoints currently accept missing
+// values, so a parse failure should not abort session creation.
+func fetchBuildInfo(client *retryablehttp.Client) (fsid, bl string) {
+	resp, err := client.Get("https://www.google.com/travel/flights")
+	if err != nil {
+		return "", ""
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return "", ""
+	}
+	if m := fsidRe.FindSubmatch(body); len(m) == 2 {
+		fsid = string(m[1])
+	}
+	if m := blRe.FindSubmatch(body); len(m) == 2 {
+		bl = string(m[1])
+	}
+	return fsid, bl
 }
 
 func getCookies(res *http.Response) ([]string, error) {
@@ -93,9 +128,57 @@ func New() (*Session, error) {
 		cookies = append(cookies, GOOGLE_ABUSE_EXEMPTION[0].Value)
 	}
 
+	fsid, bl := fetchBuildInfo(client)
+
 	return &Session{
 		Cities:  Map[string, string]{},
 		client:  client,
 		cookies: cookies,
+		fsid:    fsid,
+		bl:      bl,
+	}, nil
+}
+
+func NewWithProxy(proxyURL string) (*Session, error) {
+	client := retryablehttp.NewClient()
+	client.RetryMax = 5
+	client.Logger = nil
+	client.CheckRetry = customRetryPolicy()
+	client.RetryWaitMin = time.Second
+
+	// Set up proxy
+	proxy, err := url.Parse(proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid proxy URL: %v", err)
+	}
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(proxy),
+	}
+	client.HTTPClient.Transport = transport
+
+	res, err := client.Get("https://www.google.com/")
+	if err != nil {
+		return nil, fmt.Errorf("new session: err sending request to www.google.com: %v", err)
+	}
+
+	cookies, err := getCookies(res)
+	if err != nil {
+		return nil, fmt.Errorf("new session: err getting cookies: %v", err)
+	}
+
+	GOOGLE_ABUSE_EXEMPTION := kooky.ReadCookies(kooky.Valid, kooky.DomainHasSuffix(`google.com`), kooky.Name(`GOOGLE_ABUSE_EXEMPTION`))
+
+	if len(GOOGLE_ABUSE_EXEMPTION) == 1 {
+		cookies = append(cookies, GOOGLE_ABUSE_EXEMPTION[0].Value)
+	}
+
+	fsid, bl := fetchBuildInfo(client)
+
+	return &Session{
+		Cities:  Map[string, string]{},
+		client:  client,
+		cookies: cookies,
+		fsid:    fsid,
+		bl:      bl,
 	}, nil
 }

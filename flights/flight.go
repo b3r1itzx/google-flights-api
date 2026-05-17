@@ -118,9 +118,9 @@ func (s *Session) getFlightReqData(ctx context.Context, args Args) (string, erro
 }
 
 func (s *Session) doRequestFlights(ctx context.Context, args Args) (*http.Response, error) {
-	url := "https://www.google.com/_/FlightsFrontendUi/data/travel.frontend.flights.FlightsFrontendService/GetShoppingResults" +
-		"?f.sid=-4877864224507022871" +
-		"&bl=boq_travel-frontend-flights-ui_20250129.02_p0" +
+	reqURL := "https://www.google.com/_/FlightsFrontendUi/data/travel.frontend.flights.FlightsFrontendService/GetShoppingResults" +
+		"?f.sid=" + url.QueryEscape(s.fsid) +
+		"&bl=" + url.QueryEscape(s.bl) +
 		"&hl=en-US" +
 		"&gl=US" +
 		"&soc-app=162" +
@@ -138,7 +138,7 @@ func (s *Session) doRequestFlights(ctx context.Context, args Args) (*http.Respon
 		`f.req=` + reqDate +
 			`&at=AAuQa1qjMakasqKYcQeoFJjN7RZ3%3A` + strconv.FormatInt(time.Now().Unix(), 10) + `&`)
 
-	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to do GetShoppingResults request: %v", err)
 	}

@@ -39,9 +39,9 @@ func (s *Session) getPriceGraphReqData(ctx context.Context, args PriceGraphArgs)
 }
 
 func (s *Session) doRequestPriceGraph(ctx context.Context, args PriceGraphArgs) (*http.Response, error) {
-	url := "https://www.google.com/_/FlightsFrontendUi/data/travel.frontend.flights.FlightsFrontendService/GetCalendarGraph" +
-		"?f.sid=-4877864224507022871" +
-		"&bl=boq_travel-frontend-flights-ui_20250129.02_p0" +
+	reqURL := "https://www.google.com/_/FlightsFrontendUi/data/travel.frontend.flights.FlightsFrontendService/GetCalendarGraph" +
+		"?f.sid=" + url.QueryEscape(s.fsid) +
+		"&bl=" + url.QueryEscape(s.bl) +
 		"&hl=en-US" +
 		"&gl=US" +
 		"&soc-app=162" +
@@ -59,7 +59,7 @@ func (s *Session) doRequestPriceGraph(ctx context.Context, args PriceGraphArgs) 
 		`f.req=` + reqDate +
 			`&at=AAuQa1oq5qIkgkQ2nG9vQZFTgSME%3A` + strconv.FormatInt(time.Now().Unix(), 10) + `&`)
 
-	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, err
 	}

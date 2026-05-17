@@ -87,9 +87,21 @@ func TestGetOffersUSDPLN(t *testing.T) {
 func testGetOffersTravelers(t *testing.T, session *Session, rootPrice float64, args Args, multiplier float64) {
 	percentageDiff := 20.0
 
-	offers, _, err := session.GetOffers(context.Background(), args)
-	if err != nil {
-		t.Fatal(err)
+	// Google's GetShoppingResults endpoint sporadically returns 0 offers
+	// (status 200, empty body) for specific traveler combos when called in
+	// quick succession on the same session. The library's own retry layer
+	// only retries on non-2xx, so retry empty responses here.
+	var offers []FullOffer
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		offers, _, err = session.GetOffers(context.Background(), args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(offers) > 0 {
+			break
+		}
+		time.Sleep(3 * time.Second)
 	}
 	if len(offers) < 1 {
 		t.Fatalf("not enough offers (%d) for the following Travelers: %+v", len(offers), args.Travelers)
@@ -130,12 +142,20 @@ func TestGetOffersTravelers(t *testing.T) {
 
 	rootPrice := offers[0].Price
 
+	// Pace same-session requests: Google's GetShoppingResults endpoint
+	// occasionally returns 0 offers when called in rapid succession on a single
+	// session, which makes this test flaky without a small delay.
+	const sameSessionDelay = 5 * time.Second
+
+	time.Sleep(sameSessionDelay)
 	args.Travelers = Travelers{Adults: 2}
 	testGetOffersTravelers(t, session, rootPrice, args, 2)
 
+	time.Sleep(sameSessionDelay)
 	args.Travelers = Travelers{Adults: 2, Children: 1}
 	testGetOffersTravelers(t, session, rootPrice, args, 3)
 
+	time.Sleep(sameSessionDelay)
 	args.Travelers = Travelers{Adults: 2, Children: 1, InfantInSeat: 1}
 	testGetOffersTravelers(t, session, rootPrice, args, 4)
 }

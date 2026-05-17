@@ -15,9 +15,10 @@ import (
 func getCheapesOffer(
 	rangeStartDate, rangeEndDate time.Time,
 	tripLength int,
-	srcCity, dstCity string,
+	srcAirport, dstAirport string,
 	lang language.Tag,
 ) {
+	//session, err := flights.NewWithProxy("http://geonode_4IiA2gxjGM-type-residential:51749aea-832a-4939-abea-10d35cb9e159@us.proxy.geonode.io:9000")
 	session, err := flights.New()
 	if err != nil {
 		log.Fatal(err)
@@ -38,8 +39,8 @@ func getCheapesOffer(
 			RangeStartDate: rangeStartDate,
 			RangeEndDate:   rangeEndDate,
 			TripLength:     tripLength,
-			SrcCities:      []string{srcCity},
-			DstCities:      []string{dstCity},
+			SrcAirports:    []string{srcAirport},
+			DstAirports:    []string{dstAirport},
 			Options:        options,
 		},
 	)
@@ -59,11 +60,11 @@ func getCheapesOffer(
 	url, err := session.SerializeURL(
 		context.Background(),
 		flights.Args{
-			Date:       bestOffer.StartDate,
-			ReturnDate: bestOffer.ReturnDate,
-			SrcCities:  []string{srcCity},
-			DstCities:  []string{dstCity},
-			Options:    options,
+			Date:        bestOffer.StartDate,
+			ReturnDate:  bestOffer.ReturnDate,
+			SrcAirports: []string{srcAirport},
+			DstAirports: []string{dstAirport},
+			Options:     options,
 		},
 	)
 	if err != nil {
@@ -73,12 +74,15 @@ func getCheapesOffer(
 }
 
 func main() {
+	startDate := time.Date(2025, time.December, 10, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2025, time.December, 24, 0, 0, 0, 0, time.UTC)
+
 	getCheapesOffer(
-		time.Now().AddDate(0, 0, 60),
-		time.Now().AddDate(0, 0, 90),
-		2,
-		"Warsaw",
-		"Athens",
+		startDate,
+		endDate,
+		7,
+		"JFK",
+		"ORF",
 		language.English,
 	)
 }

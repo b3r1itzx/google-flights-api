@@ -13,10 +13,7 @@ import (
 )
 
 func TestGetPriceGraph(t *testing.T) {
-	session, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
+	session := newBrowserSessionForTest(t)
 
 	daysDiff1 := 60
 	daysDiff2 := 90
@@ -41,7 +38,7 @@ func TestGetPriceGraph(t *testing.T) {
 	}
 }
 
-func testGetPriceGraphTravelers(t *testing.T, session *Session, rootPrice float64, args PriceGraphArgs, multiplier float64) {
+func testGetPriceGraphTravelers(t *testing.T, session *BrowserSession, rootPrice float64, args PriceGraphArgs, multiplier float64) {
 	percentageDiff := 20.0
 
 	// Google's GetCalendarGraph endpoint sporadically returns 0 offers
@@ -71,10 +68,7 @@ func testGetPriceGraphTravelers(t *testing.T, session *Session, rootPrice float6
 }
 
 func TestGetPriceGraphTravelers(t *testing.T) {
-	session, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
+	session := newBrowserSessionForTest(t)
 
 	args := PriceGraphArgs{
 		time.Now().AddDate(0, 0, 60),
@@ -156,7 +150,7 @@ func TestGetPriceGraphMock(t *testing.T) {
 		},
 	)
 	if err != nil {
-		t.Fatalf(err.Error())
+		t.Fatal(err)
 	}
 
 	if len(expectedPrices) != len(offers) {

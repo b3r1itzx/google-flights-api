@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -127,15 +128,21 @@ func (s *Session) GetPriceGraph(ctx context.Context, args PriceGraphArgs) ([]Off
 		return nil, err
 	}
 
-	offers := []Offer{}
-
 	resp, err := s.doRequestPriceGraph(ctx, args)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	body := bufio.NewReader(resp.Body)
+	return parsePriceGraphResults(resp.Body), nil
+}
+
+// parsePriceGraphResults decodes a GetCalendarGraph response body (the rt=c
+// framed format) into price graph offers sorted by start date.
+func parsePriceGraphResults(r io.Reader) []Offer {
+	offers := []Offer{}
+
+	body := bufio.NewReader(r)
 	skipPrefix(body)
 
 	for {
@@ -145,7 +152,7 @@ func (s *Session) GetPriceGraph(ctx context.Context, args PriceGraphArgs) ([]Off
 			sortSlice(offers, func(lv, rv Offer) bool {
 				return lv.StartDate.Before(rv.StartDate)
 			})
-			return offers, nil
+			return offers
 		}
 
 		offers_, _ := getPriceGraphSection(bytesToDecode)

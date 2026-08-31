@@ -28,8 +28,10 @@ USAGE
   gflights <subcommand> [flags]
 
 SUBCOMMANDS
-  pricegraph   Cheapest round-trip price per departure date over a date range.
-  offers       Detailed flight offers for a specific departure (+ return) date.
+  pricegraph        Cheapest round-trip flight price per departure date over a range.
+  offers            Detailed flight offers for a specific departure (+ return) date.
+  hotels            Hotel offers for a location and stay dates.
+  hotel-pricegraph  Cheapest hotel per check-in date over a range (fixed nights).
 
 GLOBAL FLAGS (any subcommand)
   --json       Emit a JSON document on stdout instead of a human table.
@@ -48,9 +50,13 @@ func main() {
 	var err error
 	switch sub {
 	case "pricegraph":
-		err = runPriceGraph(args)
+		err = runPriceGraph(args, os.Stdout)
 	case "offers":
-		err = runOffers(args)
+		err = runOffers(args, os.Stdout)
+	case "hotels":
+		err = runHotels(args, os.Stdout)
+	case "hotel-pricegraph":
+		err = runHotelPriceGraph(args, os.Stdout)
 	case "-h", "--help", "help":
 		fmt.Print(usageRoot)
 		return
@@ -225,7 +231,7 @@ func parseDate(s, flagName string) (time.Time, error) {
 
 // --- pricegraph subcommand ---
 
-func runPriceGraph(argv []string) error {
+func runPriceGraph(argv []string, out io.Writer) error {
 	fs := flag.NewFlagSet("pricegraph", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var c commonOpts
@@ -270,10 +276,11 @@ FLAGS
 		return err
 	}
 
-	sess, err := flights.New()
+	sess, err := flights.NewBrowserSession()
 	if err != nil {
 		return fmt.Errorf("session: %v", err)
 	}
+	defer sess.Close()
 
 	args := flights.PriceGraphArgs{
 		RangeStartDate: startD,
@@ -300,9 +307,9 @@ FLAGS
 	}
 
 	if c.jsonOut {
-		return writePriceGraphJSON(os.Stdout, c, args, offers)
+		return writePriceGraphJSON(out, c, args, offers)
 	}
-	writePriceGraphText(os.Stdout, c, args, offers)
+	writePriceGraphText(out, c, args, offers)
 	return nil
 }
 
@@ -369,7 +376,7 @@ func writePriceGraphJSON(w io.Writer, c commonOpts, args flights.PriceGraphArgs,
 
 // --- offers subcommand ---
 
-func runOffers(argv []string) error {
+func runOffers(argv []string, out io.Writer) error {
 	fs := flag.NewFlagSet("offers", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var c commonOpts
@@ -428,10 +435,11 @@ FLAGS
 		returnD = departD
 	}
 
-	sess, err := flights.New()
+	sess, err := flights.NewBrowserSession()
 	if err != nil {
 		return fmt.Errorf("session: %v", err)
 	}
+	defer sess.Close()
 
 	args := flights.Args{
 		Date:        departD,
@@ -477,9 +485,9 @@ FLAGS
 	}
 
 	if c.jsonOut {
-		return writeOffersJSON(os.Stdout, c, args, offers, priceRange, url)
+		return writeOffersJSON(out, c, args, offers, priceRange, url)
 	}
-	writeOffersText(os.Stdout, c, args, offers, priceRange, url)
+	writeOffersText(out, c, args, offers, priceRange, url)
 	return nil
 }
 

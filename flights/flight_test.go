@@ -18,11 +18,21 @@ func min(x, y int) int {
 	return int(math.Min(float64(x), float64(y)))
 }
 
-func TestGetOffersUSDPLN(t *testing.T) {
-	session, err := New()
+// newBrowserSessionForTest returns a browser-backed session for live search
+// tests: the direct RPC endpoints require a BotGuard token and return empty
+// results, so live searches must go through the browser.
+func newBrowserSessionForTest(t *testing.T) *BrowserSession {
+	t.Helper()
+	session, err := NewBrowserSession()
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(session.Close)
+	return session
+}
+
+func TestGetOffersUSDPLN(t *testing.T) {
+	session := newBrowserSessionForTest(t)
 
 	date := time.Now().AddDate(0, 6, 0)
 	returnDate := time.Now().AddDate(0, 7, 0)
@@ -84,7 +94,7 @@ func TestGetOffersUSDPLN(t *testing.T) {
 	}
 }
 
-func testGetOffersTravelers(t *testing.T, session *Session, rootPrice float64, args Args, multiplier float64) {
+func testGetOffersTravelers(t *testing.T, session *BrowserSession, rootPrice float64, args Args, multiplier float64) {
 	percentageDiff := 20.0
 
 	// Google's GetShoppingResults endpoint sporadically returns 0 offers
@@ -113,10 +123,7 @@ func testGetOffersTravelers(t *testing.T, session *Session, rootPrice float64, a
 }
 
 func TestGetOffersTravelers(t *testing.T) {
-	session, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
+	session := newBrowserSessionForTest(t)
 
 	date := time.Now().AddDate(0, 6, 0)
 	returnDate := time.Now().AddDate(0, 7, 0)

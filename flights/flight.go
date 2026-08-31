@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -329,26 +330,33 @@ func (s *Session) GetOffers(ctx context.Context, args Args) ([]FullOffer, *Price
 		return nil, nil, err
 	}
 
-	finalOffers := []FullOffer{}
-	var finalPriceRange *PriceRange
-
 	resp, err := s.doRequestFlights(ctx, args)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
-	body := bufio.NewReader(resp.Body)
+	offers, priceRange := parseShoppingResults(resp.Body, args.ReturnDate)
+	return offers, priceRange, nil
+}
+
+// parseShoppingResults decodes a GetShoppingResults response body (the rt=c
+// framed format) into offers and an optional price range.
+func parseShoppingResults(r io.Reader, returnDate time.Time) ([]FullOffer, *PriceRange) {
+	finalOffers := []FullOffer{}
+	var finalPriceRange *PriceRange
+
+	body := bufio.NewReader(r)
 	skipPrefix(body)
 
 	for {
 		readLine(body) // skip line
 		bytesToDecode, err := getInnerBytes(body)
 		if err != nil {
-			return finalOffers, finalPriceRange, nil
+			return finalOffers, finalPriceRange
 		}
 
-		offers, priceRange, _ := getSectionOffers(bytesToDecode, args.ReturnDate)
+		offers, priceRange, _ := getSectionOffers(bytesToDecode, returnDate)
 		if offers != nil {
 			finalOffers = append(finalOffers, offers...)
 		}

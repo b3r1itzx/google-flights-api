@@ -214,3 +214,16 @@ gflights offers --from JFK --to FCO --depart 2026-07-06 --return 2026-07-21 --js
 | `0`  | Success.                                                                 |
 | `1`  | Runtime error (network, upstream rejection, no results, etc.).           |
 | `2`  | Invalid CLI invocation (missing required flag, bad value).               |
+
+## Testing
+
+```sh
+go test ./cmd/gflights -short   # offline: flag parsing, validation, output formatting
+go test ./cmd/gflights          # + live end-to-end canaries (needs Chrome/Chromium, ~1 min)
+```
+
+The `TestLive*` tests run every subcommand in-process against the real Google
+backends through the headless-browser session and assert the JSON output still
+carries real prices, flights, and hotels. When Google changes a request format,
+response schema, or gates an endpoint, these fail first — run them (or the
+`flights` package's live tests) to pinpoint what broke.

@@ -19,6 +19,7 @@ import (
 
 type hotelCommonOpts struct {
 	location string
+	name     string
 	minStars int
 	maxStars int
 	currency string
@@ -28,6 +29,7 @@ type hotelCommonOpts struct {
 
 func registerHotelCommon(fs *flag.FlagSet, c *hotelCommonOpts) {
 	fs.StringVar(&c.location, "location", "", "city, place, or ZIP code to search (required)")
+	fs.StringVar(&c.name, "name", "", "only include hotels whose name contains this (case-insensitive); combine with --location \"<hotel name> <city>\" to track one hotel")
 	fs.IntVar(&c.minStars, "min-stars", 0, "minimum hotel class 1-5 (0 = no minimum)")
 	fs.IntVar(&c.maxStars, "max-stars", 0, "maximum hotel class 1-5 (0 = no maximum)")
 	fs.StringVar(&c.currency, "currency", "USD", "ISO 4217 currency code")
@@ -52,10 +54,11 @@ func (c *hotelCommonOpts) resolve() (flights.HotelOptions, error) {
 		return o, errors.New("--min-stars/--max-stars must be between 0 and 5")
 	}
 	o = flights.HotelOptions{
-		MinStars: c.minStars,
-		MaxStars: c.maxStars,
-		Currency: cur,
-		Lang:     tag,
+		MinStars:     c.minStars,
+		MaxStars:     c.maxStars,
+		NameContains: c.name,
+		Currency:     cur,
+		Lang:         tag,
 	}
 	return o, nil
 }
@@ -168,6 +171,7 @@ func writeHotelsText(w io.Writer, c hotelCommonOpts, ci, co time.Time, hotels []
 
 type hotelQueryJSON struct {
 	Location string `json:"location"`
+	Name     string `json:"name,omitempty"`
 	CheckIn  string `json:"checkin"`
 	CheckOut string `json:"checkout"`
 	Nights   int    `json:"nights"`
@@ -202,6 +206,7 @@ func toHotelJSON(h flights.Hotel) hotelJSON {
 func hotelQuery(c hotelCommonOpts, ci, co time.Time) hotelQueryJSON {
 	return hotelQueryJSON{
 		Location: c.location,
+		Name:     c.name,
 		CheckIn:  ci.Format("2006-01-02"),
 		CheckOut: co.Format("2006-01-02"),
 		Nights:   int(co.Sub(ci).Hours() / 24),
@@ -305,30 +310,34 @@ FLAGS
 
 func writeHotelPriceGraphText(w io.Writer, c hotelCommonOpts, nights int, offers []flights.HotelDateOffer) {
 	fmt.Fprintf(w, "%s  |  %d-night stays  |  %d dates\n", c.location, nights, len(offers))
-	fmt.Fprintf(w, "%-12s  %-12s  %10s\n", "CHECK-IN", "CHECK-OUT", "CHEAPEST")
+	fmt.Fprintf(w, "%-12s  %-12s  %10s  %14s\n", "CHECK-IN", "CHECK-OUT", "PER NIGHT", "STAY TOTAL")
 	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 52))
 	var best *flights.HotelDateOffer
 	for i := range offers {
 		o := offers[i]
-		fmt.Fprintf(w, "%-12s  %-12s  %8.0f %s  %-4s %s\n",
+		fmt.Fprintf(w, "%-12s  %-12s  %8.0f %s  %10.0f %s  %-4s %s\n",
 			o.CheckInDate.Format("2006-01-02"), o.CheckOutDate.Format("2006-01-02"),
-			o.Hotel.Price, o.Hotel.Currency, starStr(o.Hotel.Stars), o.Hotel.Name)
+			o.Hotel.Price, o.Hotel.Currency, o.Hotel.Price*float64(nights), o.Hotel.Currency,
+			starStr(o.Hotel.Stars), o.Hotel.Name)
 		if best == nil || o.Hotel.Price < best.Hotel.Price {
 			best = &offers[i]
 		}
 	}
 	if best != nil {
-		fmt.Fprintf(w, "\nCHEAPEST: %s -> %s  %.0f %s  %s %s\n",
+		fmt.Fprintf(w, "\nCHEAPEST: %s -> %s  %.0f %s/night, %.0f %s total  %s %s\n",
 			best.CheckInDate.Format("2006-01-02"), best.CheckOutDate.Format("2006-01-02"),
-			best.Hotel.Price, best.Hotel.Currency, starStr(best.Hotel.Stars), best.Hotel.Name)
+			best.Hotel.Price, best.Hotel.Currency,
+			best.Hotel.Price*float64(nights), best.Hotel.Currency,
+			starStr(best.Hotel.Stars), best.Hotel.Name)
 	}
 }
 
 func writeHotelPriceGraphJSON(w io.Writer, c hotelCommonOpts, nights int, offers []flights.HotelDateOffer) error {
 	type dateOfferJSON struct {
-		CheckIn  string    `json:"checkin"`
-		CheckOut string    `json:"checkout"`
-		Hotel    hotelJSON `json:"hotel"`
+		CheckIn   string    `json:"checkin"`
+		CheckOut  string    `json:"checkout"`
+		StayTotal float64   `json:"stay_total"`
+		Hotel     hotelJSON `json:"hotel"`
 	}
 	out := struct {
 		Type   string          `json:"type"`
@@ -337,15 +346,16 @@ func writeHotelPriceGraphJSON(w io.Writer, c hotelCommonOpts, nights int, offers
 		Offers []dateOfferJSON `json:"offers"`
 	}{Type: "hotel-pricegraph", Count: len(offers)}
 	out.Query = hotelQueryJSON{
-		Location: c.location, Nights: nights,
+		Location: c.location, Name: c.name, Nights: nights,
 		MinStars: c.minStars, MaxStars: c.maxStars,
 		Currency: strings.ToUpper(c.currency), Lang: c.lang,
 	}
 	for _, o := range offers {
 		out.Offers = append(out.Offers, dateOfferJSON{
-			CheckIn:  o.CheckInDate.Format("2006-01-02"),
-			CheckOut: o.CheckOutDate.Format("2006-01-02"),
-			Hotel:    toHotelJSON(o.Hotel),
+			CheckIn:   o.CheckInDate.Format("2006-01-02"),
+			CheckOut:  o.CheckOutDate.Format("2006-01-02"),
+			StayTotal: o.Hotel.Price * float64(nights),
+			Hotel:     toHotelJSON(o.Hotel),
 		})
 	}
 	enc := json.NewEncoder(w)

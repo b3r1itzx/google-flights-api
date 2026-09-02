@@ -2,6 +2,7 @@ package flights
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/text/currency"
@@ -27,10 +28,11 @@ type Hotel struct {
 
 // HotelOptions contains common arguments for hotel searches.
 type HotelOptions struct {
-	MinStars int           // minimum hotel class to include (0 = no minimum)
-	MaxStars int           // maximum hotel class to include (0 = no maximum)
-	Currency currency.Unit // price currency
-	Lang     language.Tag  // language for place-name resolution and text
+	MinStars     int           // minimum hotel class to include (0 = no minimum)
+	MaxStars     int           // maximum hotel class to include (0 = no maximum)
+	NameContains string        // case-insensitive substring filter on the hotel name ("" = no filter)
+	Currency     currency.Unit // price currency
+	Lang         language.Tag  // language for place-name resolution and text
 }
 
 // HotelOptionsDefault returns sensible defaults: no star filter, USD, English.
@@ -49,6 +51,16 @@ func (o HotelOptions) currencyCode() string {
 		return "USD"
 	}
 	return c
+}
+
+// nameOK reports whether a hotel name passes the NameContains filter. Use it
+// to track a specific hotel: query its name as the Location (so Google
+// resolves and features it) and filter the results with NameContains.
+func (o HotelOptions) nameOK(name string) bool {
+	if o.NameContains == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(name), strings.ToLower(o.NameContains))
 }
 
 // starOK reports whether a hotel of the given class passes the star filter.
@@ -74,7 +86,7 @@ type HotelArgs struct {
 }
 
 func validateHotelStay(checkIn, checkOut time.Time) error {
-	now := timeNow().Truncate(24 * time.Hour)
+	now := truncateToDay(timeNow())
 	if checkOut.Before(checkIn) || checkOut.Equal(checkIn) {
 		return fmt.Errorf("checkOutDate must be after checkInDate")
 	}
@@ -125,7 +137,7 @@ func (a *HotelPriceGraphArgs) Validate() error {
 	}
 	a.RangeStartDate = truncateToDay(a.RangeStartDate)
 	a.RangeEndDate = truncateToDay(a.RangeEndDate)
-	now := timeNow().Truncate(24 * time.Hour)
+	now := truncateToDay(timeNow())
 	if a.RangeEndDate.Before(a.RangeStartDate) {
 		return fmt.Errorf("rangeEndDate is before rangeStartDate")
 	}

@@ -441,9 +441,10 @@ func TestWriteHotelPriceGraphTextAndJSON(t *testing.T) {
 		Type   string `json:"type"`
 		Count  int    `json:"count"`
 		Offers []struct {
-			CheckIn  string `json:"checkin"`
-			CheckOut string `json:"checkout"`
-			Hotel    struct {
+			CheckIn   string  `json:"checkin"`
+			CheckOut  string  `json:"checkout"`
+			StayTotal float64 `json:"stay_total"`
+			Hotel     struct {
 				Name  string  `json:"name"`
 				Price float64 `json:"price"`
 			} `json:"hotel"`
@@ -455,7 +456,7 @@ func TestWriteHotelPriceGraphTextAndJSON(t *testing.T) {
 	if j.Type != "hotel-pricegraph" || j.Count != 1 {
 		t.Errorf("envelope = %+v", j)
 	}
-	if o := j.Offers[0]; o.CheckIn != "2026-09-30" || o.Hotel.Name != "Pod Times Square" || o.Hotel.Price != 134.5 {
+	if o := j.Offers[0]; o.CheckIn != "2026-09-30" || o.Hotel.Name != "Pod Times Square" || o.Hotel.Price != 134.5 || o.StayTotal != 269 {
 		t.Errorf("offer = %+v", o)
 	}
 }

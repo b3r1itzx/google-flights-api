@@ -134,8 +134,14 @@ type Travelers struct {
 	InfantOnLap  int
 }
 
+// truncateToDay returns UTC midnight of the given time's calendar day. The
+// calendar day is taken from the time's own location, so a date built with
+// time.Now().AddDate(...) means the day the user sees on their clock —
+// date.Truncate(24h) would shift it by a day in timezones west of UTC once
+// formatted.
 func truncateToDay(date time.Time) time.Time {
-	return date.Truncate(24 * time.Hour)
+	y, m, d := date.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
 func validateNumberOfLocations(cities, airports []string) error {

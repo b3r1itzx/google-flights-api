@@ -50,8 +50,10 @@ sudo install -m 0755 gflights /usr/local/bin/gflights
 ## Subcommands
 
 ```
-gflights pricegraph   cheapest round-trip price per departure date over a date range
-gflights offers       detailed flight offers for a specific departure (+ return) date
+gflights pricegraph        cheapest round-trip price per departure date over a date range
+gflights offers            detailed flight offers for a specific departure (+ return) date
+gflights hotels            hotel offers for a location and stay dates
+gflights hotel-pricegraph  cheapest hotel per check-in date over a range (fixed nights)
 ```
 
 Run `gflights <subcommand> --help` for the full flag list.
@@ -123,6 +125,90 @@ One-way:
 gflights offers --from JFK --to FCO --depart 2026-07-06 --trip-type one-way
 ```
 
+### Hotel common flags (`hotels`, `hotel-pricegraph`)
+
+| Flag          | Default    | Notes                                                                  |
+|---------------|------------|------------------------------------------------------------------------|
+| `--location`  | _required_ | City, place, ZIP — or a hotel name to search around (see `--name`).    |
+| `--name`      | -          | Only include hotels whose name contains this (case-insensitive).       |
+| `--min-stars` | `0`        | Minimum hotel class 1–5 (`0` = no minimum). Applied client-side.       |
+| `--max-stars` | `0`        | Maximum hotel class 1–5 (`0` = no maximum).                            |
+| `--currency`  | `USD`      | ISO 4217 code. Encoded into the page URL, so it works from any region. |
+| `--lang`      | `en`       | BCP 47 tag.                                                            |
+| `--json`      | off        | Emit JSON instead of a human table.                                    |
+
+**Tracking one specific hotel**: pass the hotel's name (plus city) as
+`--location` — Google then returns it as an "entity match" alongside the area
+listing — and pass a distinctive fragment of its name as `--name` to filter
+everything else out:
+
+```sh
+gflights hotels --location "Enchantment Resort Sedona" --name Enchantment \
+  --checkin 2026-12-12 --checkout 2026-12-17
+```
+
+### `hotels`
+
+Extra flags:
+
+| Flag         | Default | Notes                                            |
+|--------------|---------|--------------------------------------------------|
+| `--checkin`  | _req._  | `YYYY-MM-DD` (must be ≥ today).                  |
+| `--checkout` | _req._  | `YYYY-MM-DD` (after `--checkin`).                |
+| `--limit`    | `20`    | Max hotels to print (`0` = no limit).            |
+| `--sort`     | `price` | `price` \| `stars` \| `rating`.                  |
+
+Prices are **nightly** rates for the requested stay. Hotels with no available
+price for the window show `--` (text) / `"price": 0` (JSON) and sort last.
+
+```sh
+gflights hotels --location "New York" --checkin 2026-06-01 --checkout 2026-06-11 \
+  --min-stars 4 --max-stars 5 --sort rating
+```
+
+### `hotel-pricegraph`
+
+Sweeps check-in dates across a range (one search per sampled date), keeping the
+cheapest hotel that passes the star/name filters for each window. This answers
+"when is the cheapest N-night stay?" — for a whole destination, or for one
+hotel when combined with `--name`.
+
+Extra flags:
+
+| Flag       | Default | Notes                                                      |
+|------------|---------|------------------------------------------------------------|
+| `--start`  | _req._  | `YYYY-MM-DD`. Earliest check-in to sample.                 |
+| `--end`    | _req._  | `YYYY-MM-DD`. Latest check-in to sample.                   |
+| `--nights` | `7`     | Length of stay.                                            |
+| `--step`   | `1`     | Days between sampled check-ins (raise it for wide ranges). |
+
+Output includes both the per-night rate and the stay total per date, plus a
+final `CHEAPEST:` line. Dates with no qualifying priced hotel are omitted — a
+missing row means sold out / no offer, not zero.
+
+```sh
+# Cheapest 5-night stay at one hotel across December
+gflights hotel-pricegraph --location "Enchantment Resort Sedona" --name Enchantment \
+  --start 2026-12-01 --end 2026-12-26 --nights 5
+
+# Cheapest 4-5 star, 10-night stay anywhere in New York, sampling every 2nd day
+gflights hotel-pricegraph --location "New York" --min-stars 4 \
+  --start 2026-06-01 --end 2026-06-30 --nights 10 --step 2
+```
+
+Each sampled date costs one browser page load (~3–5s), so a 30-day range at
+`--step 1` runs ~2 minutes.
+
+### Hotel caveats
+
+- **Vendor coverage follows the machine's market.** Google shows different
+  booking vendors (and therefore different lowest prices) depending on the IP's
+  country and sign-in state. The CLI returns the cheapest offer *its* session
+  is served; run it from the market you care about.
+- The area listing carries ~18 hotels per search, so a wide-open city query is
+  a sample, not an exhaustive minimum. Entity-match queries (`--name`) are not
+  affected by this.
+
 ## JSON shape (for agents)
 
 `--json` emits a single JSON object on stdout. Errors go to stderr and the
@@ -184,6 +270,60 @@ process exits non-zero. The shape is stable enough to parse with `jq`.
 
 `price_range` is optional (only present when Google returns a typical-range
 hint). `url` is optional (omitted if URL serialization failed).
+
+### `hotels --json`
+
+```json
+{
+  "type": "hotels",
+  "query": {
+    "location": "New York", "name": "", "checkin": "2026-06-01",
+    "checkout": "2026-06-11", "nights": 10,
+    "min_stars": 4, "currency": "USD", "lang": "en"
+  },
+  "count": 7,
+  "hotels": [
+    {
+      "name": "Aura Hotel Times Square",
+      "price": 213.4,
+      "currency": "USD",
+      "stars": 4,
+      "rating": 4.3,
+      "review_count": 1289,
+      "latitude": 40.76,
+      "longitude": -73.98,
+      "id": "11419601027756791404"
+    }
+  ]
+}
+```
+
+`price` is the nightly rate (`0` = no price available for the window).
+`base_price` appears when Google shows a strikethrough "usual" rate.
+
+### `hotel-pricegraph --json`
+
+```json
+{
+  "type": "hotel-pricegraph",
+  "query": {
+    "location": "Enchantment Resort Sedona", "name": "Enchantment",
+    "nights": 5, "currency": "USD", "lang": "en"
+  },
+  "count": 18,
+  "offers": [
+    {
+      "checkin": "2026-12-12",
+      "checkout": "2026-12-17",
+      "stay_total": 3104.75,
+      "hotel": { "name": "Enchantment Resort", "price": 620.95, "currency": "USD", "stars": 4, "rating": 4.5, "review_count": 2080, "id": "..." }
+    }
+  ]
+}
+```
+
+`offers` is sorted by check-in date; `stay_total` = `hotel.price × nights`.
+The cheapest stay is `min_by(.hotel.price)` over `offers`.
 
 ### Recipes
 

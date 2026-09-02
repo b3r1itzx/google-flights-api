@@ -371,24 +371,60 @@ func (bs *BrowserSession) GetPriceGraph(ctx context.Context, args PriceGraphArgs
 	return offers, nil
 }
 
-// hotelCurrencyTS encodes a currency code into the minimal `ts` protobuf URL
-// parameter Google Hotels reads its display currency from (the `curr`
-// parameter that works for flights is ignored on /travel/search). The
-// currency string sits at field 5.1.7 of the ts message.
-func hotelCurrencyTS(code string) string {
-	inner := append([]byte{0x0a, 0x05, 0x3a, 0x03}, code...) // 1{ 7:"code"
-	inner = append(inner, 0x1a, 0x00)                        // 3:"" }
-	msg := append([]byte{0x2a, byte(len(inner))}, inner...)  // 5{ ... }
-	return base64.RawURLEncoding.EncodeToString(msg)
+// protoVarint encodes n as a protobuf varint.
+func protoVarint(n int) []byte {
+	out := []byte{}
+	for {
+		b := byte(n & 0x7f)
+		n >>= 7
+		if n != 0 {
+			out = append(out, b|0x80)
+		} else {
+			return append(out, b)
+		}
+	}
+}
+
+// protoField encodes a length-delimited protobuf field.
+func protoField(num int, payload []byte) []byte {
+	out := append([]byte{}, byte(num<<3|2))
+	out = append(out, protoVarint(len(payload))...)
+	return append(out, payload...)
+}
+
+// hotelTS encodes the stay dates and currency into the `ts` protobuf URL
+// parameter. Google's /travel/search page ignores the legacy checkin/checkout
+// and curr query parameters — without a ts carrying the dates the page prices
+// a default one-night stay. Layout (reverse-engineered from the URLs the page
+// itself produces): dates at field 3.2.2 as {1: checkin{y,m,d}, 2:
+// checkout{y,m,d}, 3: nights}, currency string at field 5.1.7.
+func hotelTS(checkIn, checkOut time.Time, currencyCode string) string {
+	dateMsg := func(t time.Time) []byte {
+		out := append([]byte{0x08}, protoVarint(t.Year())...)
+		out = append(out, 0x10)
+		out = append(out, protoVarint(int(t.Month()))...)
+		out = append(out, 0x18)
+		out = append(out, protoVarint(t.Day())...)
+		return out
+	}
+	nights := int(checkOut.Sub(checkIn).Hours() / 24)
+	stay := protoField(1, dateMsg(checkIn))
+	stay = append(stay, protoField(2, dateMsg(checkOut))...)
+	stay = append(stay, 0x18)
+	stay = append(stay, protoVarint(nights)...)
+	f3 := protoField(3, protoField(2, protoField(2, stay)))
+
+	curr := protoField(7, []byte(currencyCode))
+	f5 := protoField(5, append(protoField(1, curr), protoField(3, nil)...))
+
+	return base64.RawURLEncoding.EncodeToString(append(f3, f5...))
 }
 
 // hotelSearchURL builds the Google Hotels search page URL for the given stay.
 func hotelSearchURL(args HotelArgs) string {
 	q := url.Values{}
 	q.Set("q", "hotels in "+args.Location)
-	q.Set("checkin", args.CheckInDate.Format("2006-01-02"))
-	q.Set("checkout", args.CheckOutDate.Format("2006-01-02"))
-	q.Set("ts", hotelCurrencyTS(args.currencyCode()))
+	q.Set("ts", hotelTS(args.CheckInDate, args.CheckOutDate, args.currencyCode()))
 	if !args.Lang.IsRoot() {
 		q.Set("hl", args.Lang.String())
 	}

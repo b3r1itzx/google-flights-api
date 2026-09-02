@@ -155,6 +155,19 @@ func TestHotelOptionsStarOK(t *testing.T) {
 	}
 }
 
+func TestHotelOptionsNameOK(t *testing.T) {
+	o := HotelOptions{NameContains: "enchantment"}
+	if !o.nameOK("Enchantment Resort") {
+		t.Error("case-insensitive substring should match")
+	}
+	if o.nameOK("Amara Resort and Spa") {
+		t.Error("non-matching name should be filtered")
+	}
+	if !(HotelOptions{}).nameOK("Anything") {
+		t.Error("empty filter should match everything")
+	}
+}
+
 func TestHotelArgsValidate(t *testing.T) {
 	base := time.Now().AddDate(0, 1, 0)
 	good := HotelArgs{Location: "X", CheckInDate: base, CheckOutDate: base.AddDate(0, 0, 3)}
@@ -191,12 +204,20 @@ func TestGetHotelOffersLive(t *testing.T) {
 		t.Fatal("expected at least one hotel")
 	}
 	priced := 0
+	wantCI := truncateToDay(time.Now().AddDate(0, 1, 0))
 	for _, h := range hotels {
 		if h.Name == "" {
 			t.Error("hotel with empty name")
 		}
 		if h.Price > 0 {
 			priced++
+			// the dates echoed next to the price must be the requested stay —
+			// otherwise Google priced a default stay and the ts URL param
+			// encoding has regressed
+			if !h.CheckInDate.Equal(wantCI) {
+				t.Errorf("hotel %q priced for check-in %s, want %s (date encoding regressed?)",
+					h.Name, h.CheckInDate.Format("2006-01-02"), wantCI.Format("2006-01-02"))
+			}
 		}
 	}
 	if priced == 0 {

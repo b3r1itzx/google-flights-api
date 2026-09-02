@@ -177,11 +177,13 @@ func deepDecodeJSON(v interface{}, depth int) interface{} {
 	return v
 }
 
-// collectHotelRecords walks the decoded tree and returns every organic hotel
-// listing record. Two encodings exist: the direct RPC keys wrapped records
-// ([[...fields...]]) under "397419284", while the search page's own RPC keys
-// bare field lists under "179305178" — those are wrapped here so both come
-// out in the same [[...fields...]] shape.
+// collectHotelRecords walks the decoded tree and returns every hotel record.
+// Three encodings exist: the direct RPC keys wrapped records
+// ([[...fields...]]) under "397419284"; the search page's own RPC keys bare
+// field lists under "179305178" for the organic listing, and under
+// "441552390" for the entity match — the specific hotel a name-like query
+// resolved to. Bare records are wrapped here so all come out in the same
+// [[...fields...]] shape.
 func collectHotelRecords(v interface{}, out *[]interface{}) {
 	switch x := v.(type) {
 	case map[string]interface{}:
@@ -189,7 +191,7 @@ func collectHotelRecords(v interface{}, out *[]interface{}) {
 			switch k {
 			case "397419284":
 				*out = append(*out, val)
-			case "179305178":
+			case "179305178", "441552390":
 				*out = append(*out, []interface{}{val})
 			}
 			collectHotelRecords(val, out)
@@ -277,6 +279,41 @@ func parseStars(v interface{}) int {
 	return 0
 }
 
+// stayDates extracts the check-in/check-out dates Google echoed inside a
+// record's price block ([6][1][4] = [[y,m,d],[y,m,d],nights,...]). These are
+// the dates the returned price is actually for — when the request dates were
+// not applied (e.g. a ts URL param regression), they reveal it.
+func stayDates(v interface{}) (ci, co time.Time, ok bool) {
+	blk, ok1 := v.([]interface{})
+	if !ok1 || len(blk) < 2 {
+		return ci, co, false
+	}
+	inner, ok2 := blk[1].([]interface{})
+	if !ok2 || len(inner) < 5 {
+		return ci, co, false
+	}
+	stay, ok3 := inner[4].([]interface{})
+	if !ok3 || len(stay) < 2 {
+		return ci, co, false
+	}
+	toDate := func(v interface{}) (time.Time, bool) {
+		t, ok := v.([]interface{})
+		if !ok || len(t) < 3 {
+			return time.Time{}, false
+		}
+		y, okY := asFloat(t[0])
+		m, okM := asFloat(t[1])
+		d, okD := asFloat(t[2])
+		if !okY || !okM || !okD {
+			return time.Time{}, false
+		}
+		return time.Date(int(y), time.Month(m), int(d), 0, 0, 0, 0, time.UTC), true
+	}
+	ci, okCI := toDate(stay[0])
+	co, okCO := toDate(stay[1])
+	return ci, co, okCI && okCO
+}
+
 func parseHotelRecord(rw interface{}, args HotelArgs) (Hotel, bool) {
 	// records are wrapped: [ [ ...fields... ] ]
 	wrap, ok := rw.([]interface{})
@@ -344,6 +381,12 @@ func parseHotelRecord(rw interface{}, args HotelArgs) (Hotel, bool) {
 			h.Price = p
 			h.BasePrice = b
 		}
+		// prefer the stay dates Google echoed next to the price — they are
+		// what the price is actually for
+		if ci, co, ok := stayDates(r[6]); ok {
+			h.CheckInDate = ci
+			h.CheckOutDate = co
+		}
 	}
 	if h.Price == 0 {
 		if p, b, ok := findPriceNode(r); ok {
@@ -396,7 +439,7 @@ func parseHotelOffers(r io.Reader, args HotelArgs) ([]Hotel, error) {
 		if !ok || seen[h.Name] {
 			continue
 		}
-		if !args.starOK(h.Stars) {
+		if !args.starOK(h.Stars) || !args.nameOK(h.Name) {
 			continue
 		}
 		seen[h.Name] = true

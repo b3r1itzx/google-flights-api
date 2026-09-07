@@ -52,6 +52,7 @@ sudo install -m 0755 gflights /usr/local/bin/gflights
 ```
 gflights pricegraph        cheapest round-trip price per departure date over a date range
 gflights offers            detailed flight offers for a specific departure (+ return) date
+gflights deals             cheapest destinations from an origin, ranked (fan-out explore)
 gflights hotels            hotel offers for a location and stay dates
 gflights hotel-pricegraph  cheapest hotel per check-in date over a range (fixed nights)
 ```
@@ -124,6 +125,44 @@ One-way:
 ```sh
 gflights offers --from JFK --to FCO --depart 2026-07-06 --trip-type one-way
 ```
+
+### `deals`
+
+Finds the cheapest destinations from one origin — the origin-wide "explore"
+the underlying API has no single call for. It runs one `pricegraph` search per
+destination (in parallel) and reports the cheapest round-trip per destination,
+sorted cheapest first. Destinations come from `--to` (comma-separated),
+`--preset`, or both.
+
+Extra flags (plus all the common flags; `--to` is a comma-separated **list**
+here, and `--from` is the only required route flag):
+
+| Flag            | Default | Notes                                                          |
+|-----------------|---------|----------------------------------------------------------------|
+| `--start`       | _req._  | `YYYY-MM-DD`. Range start (≥ today).                           |
+| `--end`         | _req._  | `YYYY-MM-DD`. Within 161 days of `--start`.                    |
+| `--duration`    | `7`     | Trip length in days.                                           |
+| `--preset`      | -       | Built-in destination set. Available: `us-major` (~30 airports).|
+| `--concurrency` | `4`     | Destinations searched in parallel.                             |
+| `--limit`       | `0`     | Show only the N cheapest destinations (`0` = all).             |
+
+The origin is removed from the destination list automatically, and duplicates
+are de-duped (case-insensitive). Each destination costs one browser search
+(~6–8s) but they run `--concurrency` at a time, so 30 destinations at
+`--concurrency 6` finishes in ~20s.
+
+```sh
+# Hottest deals from Norfolk across a set of cities
+gflights deals --from ORF --to MCO,ATL,LAS,DEN,BOS \
+  --start 2026-11-01 --end 2026-11-30 --duration 4
+
+# Same, but sweep ~30 major US airports and show the 10 cheapest
+gflights deals --from ORF --preset us-major \
+  --start 2026-11-01 --end 2026-11-30 --duration 4 --concurrency 6 --limit 10
+```
+
+Destinations with no priced offer in the range are dropped from the ranking and
+listed separately (text) / under `failures` (JSON).
 
 ### Hotel common flags (`hotels`, `hotel-pricegraph`)
 
@@ -270,6 +309,28 @@ process exits non-zero. The shape is stable enough to parse with `jq`.
 
 `price_range` is optional (only present when Google returns a typical-range
 hint). `url` is optional (omitted if URL serialization failed).
+
+### `deals --json`
+
+```json
+{
+  "type": "deals",
+  "query": { "from": "ORF", "to": "MCO,ATL,LAS", "range_start": "2026-11-01", "range_end": "2026-11-30", "duration_days": 4, "...": "..." },
+  "destinations_searched": 3,
+  "total_with_offers": 3,
+  "count": 3,
+  "deals": [
+    { "dest": "ATL", "price": 80, "depart": "2026-11-03", "return": "2026-11-07", "currency": "USD" }
+  ],
+  "failures": [
+    { "dest": "SomePlace", "reason": "no offers with a price" }
+  ]
+}
+```
+
+`deals` is sorted cheapest first; `count` is how many are shown (after
+`--limit`), `total_with_offers` how many had any offer. The single best deal is
+`.deals[0]`.
 
 ### `hotels --json`
 

@@ -30,6 +30,7 @@ USAGE
 SUBCOMMANDS
   pricegraph        Cheapest round-trip flight price per departure date over a range.
   offers            Detailed flight offers for a specific departure (+ return) date.
+  deals             Cheapest destinations from an origin, ranked (fan-out explore).
   hotels            Hotel offers for a location and stay dates.
   hotel-pricegraph  Cheapest hotel per check-in date over a range (fixed nights).
 
@@ -53,6 +54,8 @@ func main() {
 		err = runPriceGraph(args, os.Stdout)
 	case "offers":
 		err = runOffers(args, os.Stdout)
+	case "deals":
+		err = runDeals(args, os.Stdout)
 	case "hotels":
 		err = runHotels(args, os.Stdout)
 	case "hotel-pricegraph":
@@ -102,35 +105,31 @@ func registerCommon(fs *flag.FlagSet, c *commonOpts) {
 	fs.BoolVar(&c.jsonOut, "json", false, "emit JSON instead of human-readable text")
 }
 
-func (c *commonOpts) resolve() (flights.Options, srcDst, error) {
+// resolveOptions parses the traveler/class/stops/currency/lang/trip-type flags
+// into flights.Options. It does not require a destination, so origin-only
+// commands (deals) can share it.
+func (c *commonOpts) resolveOptions() (flights.Options, error) {
 	var opts flights.Options
-	var sd srcDst
-
-	if c.from == "" || c.to == "" {
-		return opts, sd, errors.New("--from and --to are required")
-	}
-	sd.srcCities, sd.srcAirports = splitLocations(c.from)
-	sd.dstCities, sd.dstAirports = splitLocations(c.to)
 
 	cls, err := parseClass(c.class)
 	if err != nil {
-		return opts, sd, err
+		return opts, err
 	}
 	stops, err := parseStops(c.stops)
 	if err != nil {
-		return opts, sd, err
+		return opts, err
 	}
 	tt, err := parseTripType(c.tripType)
 	if err != nil {
-		return opts, sd, err
+		return opts, err
 	}
 	cur, err := currency.ParseISO(strings.ToUpper(c.currency))
 	if err != nil {
-		return opts, sd, fmt.Errorf("invalid --currency %q: %v", c.currency, err)
+		return opts, fmt.Errorf("invalid --currency %q: %v", c.currency, err)
 	}
 	tag, err := language.Parse(c.lang)
 	if err != nil {
-		return opts, sd, fmt.Errorf("invalid --lang %q: %v", c.lang, err)
+		return opts, fmt.Errorf("invalid --lang %q: %v", c.lang, err)
 	}
 
 	opts = flights.Options{
@@ -146,6 +145,21 @@ func (c *commonOpts) resolve() (flights.Options, srcDst, error) {
 		TripType: tt,
 		Lang:     tag,
 	}
+	return opts, nil
+}
+
+func (c *commonOpts) resolve() (flights.Options, srcDst, error) {
+	var sd srcDst
+
+	if c.from == "" || c.to == "" {
+		return flights.Options{}, sd, errors.New("--from and --to are required")
+	}
+	opts, err := c.resolveOptions()
+	if err != nil {
+		return opts, sd, err
+	}
+	sd.srcCities, sd.srcAirports = splitLocations(c.from)
+	sd.dstCities, sd.dstAirports = splitLocations(c.to)
 	return opts, sd, nil
 }
 

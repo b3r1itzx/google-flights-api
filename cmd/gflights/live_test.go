@@ -138,6 +138,46 @@ func TestLivePriceGraph(t *testing.T) {
 	}
 }
 
+func TestLiveDeals(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping live CLI test in -short mode")
+	}
+	start := time.Now().AddDate(0, 2, 0)
+	end := start.AddDate(0, 0, 20)
+	var out struct {
+		Type  string `json:"type"`
+		Count int    `json:"count"`
+		Deals []struct {
+			Dest     string  `json:"dest"`
+			Price    float64 `json:"price"`
+			Depart   string  `json:"depart"`
+			Return   string  `json:"return"`
+			Currency string  `json:"currency"`
+		} `json:"deals"`
+	}
+	runJSON(t, runDeals, []string{
+		"--from", "ORF", "--to", "ATL,MCO,LAS",
+		"--start", day(start), "--end", day(end), "--duration", "4",
+		"--concurrency", "3",
+	}, &out)
+
+	if out.Type != "deals" || out.Count == 0 {
+		t.Fatalf("expected deals, got type=%q count=%d", out.Type, out.Count)
+	}
+	// results must be sorted cheapest-first and carry real data
+	for i, d := range out.Deals {
+		if d.Price <= 0 || d.Dest == "" || d.Currency != "USD" {
+			t.Errorf("deal %d incomplete: %+v", i, d)
+		}
+		if _, err := time.Parse("2006-01-02", d.Depart); err != nil {
+			t.Errorf("deal %d bad depart %q", i, d.Depart)
+		}
+		if i > 0 && out.Deals[i-1].Price > d.Price {
+			t.Errorf("deals not sorted: %v before %v", out.Deals[i-1].Price, d.Price)
+		}
+	}
+}
+
 func TestLiveHotels(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping live CLI test in -short mode")

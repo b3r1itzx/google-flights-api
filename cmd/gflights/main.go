@@ -267,6 +267,7 @@ func runPriceGraph(ctx context.Context, argv []string, out io.Writer) error {
 		end      = fs.String("end", "", "range end date YYYY-MM-DD (required); must be within 161 days of start")
 		duration = fs.Int("duration", 7, "trip length in days")
 		sortBy   = fs.String("sort", "date", "sort offers by: date|price")
+		stream   = fs.Bool("stream", false, "emit NDJSON: a meta line, one fare line per departure date, then a done line")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `pricegraph — cheapest round-trip price per departure date over a range.
@@ -337,6 +338,23 @@ FLAGS
 		sort.SliceStable(offers, func(i, j int) bool { return offers[i].StartDate.Before(offers[j].StartDate) })
 	default:
 		return fmt.Errorf("invalid --sort %q (want date|price)", *sortBy)
+	}
+
+	if *stream {
+		nd := newNDJSON(out)
+		nd.emit(streamMeta{
+			Type: "meta", Command: "pricegraph", From: c.from, To: c.to,
+			Start: args.RangeStartDate.Format("2006-01-02"), End: args.RangeEndDate.Format("2006-01-02"),
+			Duration: args.TripLength, Count: len(offers), Currency: args.Currency.String(),
+		})
+		for _, o := range offers {
+			nd.emit(streamFare{
+				Type: "fare", Depart: o.StartDate.Format("2006-01-02"),
+				Return: o.ReturnDate.Format("2006-01-02"), Price: o.Price, Currency: args.Currency.String(),
+			})
+		}
+		nd.emit(streamDone{Type: "done", Count: len(offers)})
+		return nd.err
 	}
 
 	if c.jsonOut {
@@ -420,6 +438,7 @@ func runOffers(ctx context.Context, argv []string, out io.Writer) error {
 		limit   = fs.Int("limit", 20, "maximum number of offers to show (0 = no limit)")
 		sortBy  = fs.String("sort", "price", "sort offers by: price|duration|departure")
 		withURL = fs.Bool("url", true, "include the Google Flights URL in the output")
+		stream  = fs.Bool("stream", false, "emit NDJSON: price_range first, then one offer line each, then a done line")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `offers — detailed flight offers for a specific departure (+ return) date.
@@ -521,11 +540,50 @@ FLAGS
 		}
 	}
 
+	if *stream {
+		nd := newNDJSON(out)
+		// price_range first: it's Google's typical-price band and the single
+		// most useful field the consumer reads, so hand it over before the
+		// itineraries.
+		if priceRange != nil {
+			nd.emit(streamPriceRange{
+				Type: "price_range", Low: priceRange.Low, High: priceRange.High,
+				Currency: args.Currency.String(),
+			})
+		}
+		nd.emit(streamMeta{
+			Type: "meta", Command: "offers", From: c.from, To: c.to,
+			Depart: args.Date.Format("2006-01-02"), Return: args.ReturnDate.Format("2006-01-02"),
+			Count: len(offers), Currency: args.Currency.String(),
+		})
+		for _, o := range offers {
+			nd.emit(offerLine(o, args, url))
+		}
+		nd.emit(streamDone{Type: "done", Count: len(offers)})
+		return nd.err
+	}
+
 	if c.jsonOut {
 		return writeOffersJSON(out, c, args, offers, priceRange, url)
 	}
 	writeOffersText(out, c, args, offers, priceRange, url)
 	return nil
+}
+
+// offerLine builds one streamed offer object, reusing the same per-offer shape
+// as --json (fullOfferJSON) under a "type":"offer" tag.
+func offerLine(o flights.FullOffer, args flights.Args, url string) map[string]any {
+	fo := toFullOfferJSON(o, args)
+	return map[string]any{
+		"type":             "offer",
+		"price":            fo.Price,
+		"currency":         fo.Currency,
+		"duration_minutes": fo.DurationMinutes,
+		"stops":            fo.Stops,
+		"src_airport":      fo.SrcAirport,
+		"dst_airport":      fo.DstAirport,
+		"flights":          fo.Flights,
+	}
 }
 
 func writeOffersText(w io.Writer, c commonOpts, args flights.Args, offers []flights.FullOffer, pr *flights.PriceRange, url string) {
@@ -615,40 +673,46 @@ func writeOffersJSON(w io.Writer, c commonOpts, args flights.Args, offers []flig
 		out.PriceRange = &priceRangeJSON{Low: pr.Low, High: pr.High}
 	}
 	for _, o := range offers {
-		fo := fullOfferJSON{
-			Price:           o.Price,
-			Currency:        args.Currency.String(),
-			DurationMinutes: int(o.FlightDuration.Minutes()),
-			SrcAirport:      o.SrcAirportCode,
-			DstAirport:      o.DstAirportCode,
-			SrcCity:         o.SrcCity,
-			DstCity:         o.DstCity,
-		}
-		if len(o.Flight) > 0 {
-			fo.Stops = len(o.Flight) - 1
-		}
-		for _, f := range o.Flight {
-			fo.Flights = append(fo.Flights, flightJSON{
-				Airline:         f.AirlineName,
-				FlightNumber:    f.FlightNumber,
-				From:            f.DepAirportCode,
-				FromName:        f.DepAirportName,
-				FromCity:        f.DepCity,
-				To:              f.ArrAirportCode,
-				ToName:          f.ArrAirportName,
-				ToCity:          f.ArrCity,
-				Departure:       f.DepTime.Format(time.RFC3339),
-				Arrival:         f.ArrTime.Format(time.RFC3339),
-				DurationMinutes: int(f.Duration.Minutes()),
-				Airplane:        f.Airplane,
-				Legroom:         f.Legroom,
-			})
-		}
-		out.Offers = append(out.Offers, fo)
+		out.Offers = append(out.Offers, toFullOfferJSON(o, args))
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
+}
+
+// toFullOfferJSON converts one offer to the wire shape shared by --json and
+// --stream.
+func toFullOfferJSON(o flights.FullOffer, args flights.Args) fullOfferJSON {
+	fo := fullOfferJSON{
+		Price:           o.Price,
+		Currency:        args.Currency.String(),
+		DurationMinutes: int(o.FlightDuration.Minutes()),
+		SrcAirport:      o.SrcAirportCode,
+		DstAirport:      o.DstAirportCode,
+		SrcCity:         o.SrcCity,
+		DstCity:         o.DstCity,
+	}
+	if len(o.Flight) > 0 {
+		fo.Stops = len(o.Flight) - 1
+	}
+	for _, f := range o.Flight {
+		fo.Flights = append(fo.Flights, flightJSON{
+			Airline:         f.AirlineName,
+			FlightNumber:    f.FlightNumber,
+			From:            f.DepAirportCode,
+			FromName:        f.DepAirportName,
+			FromCity:        f.DepCity,
+			To:              f.ArrAirportCode,
+			ToName:          f.ArrAirportName,
+			ToCity:          f.ArrCity,
+			Departure:       f.DepTime.Format(time.RFC3339),
+			Arrival:         f.ArrTime.Format(time.RFC3339),
+			DurationMinutes: int(f.Duration.Minutes()),
+			Airplane:        f.Airplane,
+			Legroom:         f.Legroom,
+		})
+	}
+	return fo
 }
 
 // --- shared JSON shape ---

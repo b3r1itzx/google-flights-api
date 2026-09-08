@@ -84,6 +84,7 @@ func runDeals(ctx context.Context, argv []string, out io.Writer) error {
 		limit       = fs.Int("limit", 0, "show only the top N destinations after sorting (0 = all)")
 		sortBy      = fs.String("sort", "price", "rank by: price (cheapest first) | deal (biggest % below typical first)")
 		minDiscount = fs.Float64("min-discount", 0, "only show destinations at least this percent below their typical fare (impulse-deal filter)")
+		stream      = fs.Bool("stream", false, "emit NDJSON (one object per line) as each destination completes, then a done line; --min-discount still filters, --sort/--limit are ignored")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(out, `deals — cheapest destinations from an origin, ranked (fan-out explore).
@@ -157,17 +158,51 @@ FLAGS
 		return err
 	}
 
+	if err := validateSort(*sortBy); *stream == false && err != nil {
+		return err
+	}
+
 	sess, err := flights.NewBrowserSession()
 	if err != nil {
 		return fmt.Errorf("session: %v", err)
 	}
 	defer sess.Close()
 
-	deals, failures := searchDeals(ctx, sess, dealParams{
+	params := dealParams{
 		srcCities: srcCities, srcAirports: srcAirports,
 		start: startD, end: endD, duration: *duration,
 		opts: opts, dests: dests, concurrency: *concurrency,
-	})
+	}
+
+	if *stream {
+		nd := newNDJSON(out)
+		nd.emit(streamMeta{
+			Type: "meta", Command: "deals", From: c.from,
+			Start: startD.Format("2006-01-02"), End: endD.Format("2006-01-02"),
+			Duration: *duration, Count: len(dests), Currency: opts.Currency.String(),
+		})
+		var emitted int
+		var emu sync.Mutex
+		_, failures := searchDeals(ctx, sess, params, func(d deal) {
+			if *minDiscount > 0 && d.Discount < *minDiscount {
+				return // impulse filter still applies while streaming
+			}
+			emu.Lock()
+			emitted++
+			emu.Unlock()
+			nd.emit(streamDeal{
+				Type: "deal", Dest: d.Dest, Price: d.Price, Typical: d.Typical,
+				Discount: d.Discount, Depart: d.Depart, Return: d.Return, Currency: d.Currency,
+			})
+		})
+		for _, name := range sortedKeys(failures) {
+			nd.emit(streamFailure{Type: "failure", Dest: name, Reason: failures[name]})
+		}
+		nd.emit(streamDone{Type: "done", Count: emitted, Failures: len(failures)})
+		return nd.err
+	}
+
+	deals, failures := searchDeals(ctx, sess, params, nil)
 
 	totalWithOffers := len(deals)
 
@@ -181,6 +216,25 @@ FLAGS
 	}
 	writeDealsText(out, c, startD, endD, *duration, len(dests), totalWithOffers, deals, failures)
 	return nil
+}
+
+// sortedKeys returns a map's keys in sorted order.
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// validateSort reports whether a --sort value is one deals accepts.
+func validateSort(sortBy string) error {
+	switch strings.ToLower(sortBy) {
+	case "price", "", "deal", "discount":
+		return nil
+	}
+	return fmt.Errorf("invalid --sort %q (want price|deal)", sortBy)
 }
 
 // rankDeals applies the impulse-deal filter (min percent below typical), sorts
@@ -284,8 +338,13 @@ type dealParams struct {
 // (the calendar RPC returns empty, or the price-graph UI click loses a race
 // under load), so failures are retried once at low concurrency — important for
 // international routes where a busy first pass drops many.
-func searchDeals(ctx context.Context, sess *flights.BrowserSession, p dealParams) ([]deal, map[string]string) {
-	deals, failures := runDealBatch(ctx, sess, p, p.dests, p.concurrency)
+// emit, if non-nil, is called once per destination that yields a priced deal,
+// as soon as it completes (from a worker goroutine, serialized). It streams
+// results in --stream mode; failures are not streamed here because a first-pass
+// failure may still succeed on retry — only the final, post-retry failures are
+// reported by the caller.
+func searchDeals(ctx context.Context, sess *flights.BrowserSession, p dealParams, emit func(deal)) ([]deal, map[string]string) {
+	deals, failures := runDealBatch(ctx, sess, p, p.dests, p.concurrency, emit)
 
 	if len(failures) > 0 {
 		retry := make([]string, 0, len(failures))
@@ -296,7 +355,7 @@ func searchDeals(ctx context.Context, sess *flights.BrowserSession, p dealParams
 		if retryConc > p.concurrency {
 			retryConc = p.concurrency
 		}
-		more, stillFailed := runDealBatch(ctx, sess, p, retry, retryConc)
+		more, stillFailed := runDealBatch(ctx, sess, p, retry, retryConc, emit)
 		deals = append(deals, more...)
 		failures = stillFailed
 	}
@@ -305,8 +364,8 @@ func searchDeals(ctx context.Context, sess *flights.BrowserSession, p dealParams
 
 // runDealBatch searches the given destinations concurrently (bounded by
 // concurrency) and returns the deals found plus the destinations that yielded
-// no priced offer.
-func runDealBatch(ctx context.Context, sess *flights.BrowserSession, p dealParams, dests []string, concurrency int) ([]deal, map[string]string) {
+// no priced offer. If emit is non-nil it is invoked for each deal as it lands.
+func runDealBatch(ctx context.Context, sess *flights.BrowserSession, p dealParams, dests []string, concurrency int, emit func(deal)) ([]deal, map[string]string) {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -354,7 +413,7 @@ func runDealBatch(ctx context.Context, sess *flights.BrowserSession, p dealParam
 			if typical > 0 {
 				discount = (typical - best.Price) / typical * 100
 			}
-			deals = append(deals, deal{
+			d := deal{
 				Dest:     dest,
 				Price:    best.Price,
 				Typical:  typical,
@@ -362,7 +421,11 @@ func runDealBatch(ctx context.Context, sess *flights.BrowserSession, p dealParam
 				Depart:   best.StartDate.Format("2006-01-02"),
 				Return:   best.ReturnDate.Format("2006-01-02"),
 				Currency: currencyCode,
-			})
+			}
+			deals = append(deals, d)
+			if emit != nil {
+				emit(d)
+			}
 		}(dest)
 	}
 	wg.Wait()

@@ -436,6 +436,38 @@ Just the booking URL:
 gflights offers --from JFK --to FCO --depart 2026-07-06 --return 2026-07-21 --json | jq -r '.url'
 ```
 
+## Streaming (`--stream`)
+
+`offers`, `pricegraph`, and `deals` accept `--stream`, which emits
+newline-delimited JSON (NDJSON) — one object per line, flushed as it happens —
+instead of one aggregate document. `--json` is unchanged; `--stream` is a
+separate mode. Every line carries a `type`, and every stream ends with exactly
+one `done` line, so an empty result and a died-halfway result are
+distinguishable (no more retry-on-empty guessing).
+
+`deals` is the one that streams *incrementally over time*: each destination's
+deal is emitted the moment it completes, so the first result arrives in ~6s
+instead of after the whole ~minutes-long sweep. `pricegraph` and `offers` fetch
+in one shot, so their lines arrive together — but you still get NDJSON rows (no
+big-array parse) and, for `offers`, `price_range` **first**, before the
+itineraries.
+
+```
+$ gflights deals --from ORF --preset us-major --start … --end … --stream
+{"type":"meta","command":"deals","from":"ORF","destinations":30,"range_start":"…","currency":"USD"}
+{"type":"deal","dest":"ATL","price":80,"typical":119,"discount":32.8,"depart":"…","return":"…","currency":"USD"}
+{"type":"deal","dest":"MCO","price":123,"typical":162,"discount":24.3,"depart":"…",...}
+{"type":"failure","dest":"SEA","reason":"no offers with a price"}
+{"type":"done","count":28,"failures":2}
+```
+
+Line types: `meta` (query echo, first), `deal` (deals), `fare` (pricegraph, one
+per departure date), `price_range` (offers, emitted before any `offer`),
+`offer` (offers), `failure` (a destination that yielded nothing, after retry),
+`done` (always last, with `count` emitted and `failures`). In `deals --stream`,
+`--min-discount` still filters inline; `--sort` and `--limit` are ignored (the
+consumer orders the stream).
+
 ## Exit codes
 
 | Code | Meaning                                                                  |

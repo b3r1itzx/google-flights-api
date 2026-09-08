@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"strings"
@@ -168,7 +169,7 @@ func TestHotelCommonOptsResolve(t *testing.T) {
 func TestRunFlagValidation(t *testing.T) {
 	cases := []struct {
 		name    string
-		run     func([]string, io.Writer) error
+		run     func(context.Context, []string, io.Writer) error
 		argv    []string
 		wantErr string
 	}{
@@ -183,7 +184,7 @@ func TestRunFlagValidation(t *testing.T) {
 		{"hotel-pricegraph missing dates", runHotelPriceGraph, []string{"--location", "New York"}, "--start and --end are required"},
 	}
 	for _, c := range cases {
-		err := c.run(c.argv, io.Discard)
+		err := c.run(context.Background(), c.argv, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), c.wantErr) {
 			t.Errorf("%s: err = %v, want containing %q", c.name, err, c.wantErr)
 		}

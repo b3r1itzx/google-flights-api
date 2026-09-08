@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -48,18 +50,28 @@ func main() {
 	}
 	sub := os.Args[1]
 	args := os.Args[2:]
+
+	// A signal-cancelled context so a graceful stop (SIGTERM/SIGINT) unwinds
+	// the search, letting the deferred BrowserSession.Close run and shut the
+	// browser down over CDP — the one teardown that works even for snap
+	// Chromium, which detaches into its own systemd scope and survives a
+	// Pdeathsig aimed at the direct child. Callers should prefer SIGTERM with
+	// a grace period over an immediate SIGKILL for this reason.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	var err error
 	switch sub {
 	case "pricegraph":
-		err = runPriceGraph(args, os.Stdout)
+		err = runPriceGraph(ctx, args, os.Stdout)
 	case "offers":
-		err = runOffers(args, os.Stdout)
+		err = runOffers(ctx, args, os.Stdout)
 	case "deals":
-		err = runDeals(args, os.Stdout)
+		err = runDeals(ctx, args, os.Stdout)
 	case "hotels":
-		err = runHotels(args, os.Stdout)
+		err = runHotels(ctx, args, os.Stdout)
 	case "hotel-pricegraph":
-		err = runHotelPriceGraph(args, os.Stdout)
+		err = runHotelPriceGraph(ctx, args, os.Stdout)
 	case "-h", "--help", "help":
 		fmt.Print(usageRoot)
 		return
@@ -245,7 +257,7 @@ func parseDate(s, flagName string) (time.Time, error) {
 
 // --- pricegraph subcommand ---
 
-func runPriceGraph(argv []string, out io.Writer) error {
+func runPriceGraph(ctx context.Context, argv []string, out io.Writer) error {
 	fs := flag.NewFlagSet("pricegraph", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var c commonOpts
@@ -290,12 +302,6 @@ FLAGS
 		return err
 	}
 
-	sess, err := flights.NewBrowserSession()
-	if err != nil {
-		return fmt.Errorf("session: %v", err)
-	}
-	defer sess.Close()
-
 	args := flights.PriceGraphArgs{
 		RangeStartDate: startD,
 		RangeEndDate:   endD,
@@ -306,7 +312,20 @@ FLAGS
 		DstAirports:    sd.dstAirports,
 		Options:        opts,
 	}
-	offers, err := sess.GetPriceGraph(context.Background(), args)
+	// Validate before launching the browser: a bad range (equal or reversed
+	// dates, or >161 days) is our caller's bug and will fail identically every
+	// time, so there's no reason to pay a browser launch to discover it.
+	if err := args.Validate(); err != nil {
+		return err
+	}
+
+	sess, err := flights.NewBrowserSession()
+	if err != nil {
+		return fmt.Errorf("session: %v", err)
+	}
+	defer sess.Close()
+
+	offers, err := sess.GetPriceGraph(ctx, args)
 	if err != nil {
 		return err
 	}
@@ -390,7 +409,7 @@ func writePriceGraphJSON(w io.Writer, c commonOpts, args flights.PriceGraphArgs,
 
 // --- offers subcommand ---
 
-func runOffers(argv []string, out io.Writer) error {
+func runOffers(ctx context.Context, argv []string, out io.Writer) error {
 	fs := flag.NewFlagSet("offers", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var c commonOpts
@@ -449,12 +468,6 @@ FLAGS
 		returnD = departD
 	}
 
-	sess, err := flights.NewBrowserSession()
-	if err != nil {
-		return fmt.Errorf("session: %v", err)
-	}
-	defer sess.Close()
-
 	args := flights.Args{
 		Date:        departD,
 		ReturnDate:  returnD,
@@ -464,7 +477,17 @@ FLAGS
 		DstAirports: sd.dstAirports,
 		Options:     opts,
 	}
-	offers, priceRange, err := sess.GetOffers(context.Background(), args)
+	if err := args.ValidateOffersArgs(); err != nil {
+		return err
+	}
+
+	sess, err := flights.NewBrowserSession()
+	if err != nil {
+		return fmt.Errorf("session: %v", err)
+	}
+	defer sess.Close()
+
+	offers, priceRange, err := sess.GetOffers(ctx, args)
 	if err != nil {
 		return err
 	}
@@ -493,7 +516,7 @@ FLAGS
 	if *withURL {
 		// SerializeURL can fail independently (network); don't fail the whole
 		// command over it — just skip the URL in output.
-		if u, uerr := sess.SerializeURL(context.Background(), args); uerr == nil {
+		if u, uerr := sess.SerializeURL(ctx, args); uerr == nil {
 			url = u
 		}
 	}

@@ -65,7 +65,7 @@ func (c *hotelCommonOpts) resolve() (flights.HotelOptions, error) {
 
 // --- hotels subcommand ---
 
-func runHotels(argv []string, out io.Writer) error {
+func runHotels(ctx context.Context, argv []string, out io.Writer) error {
 	fs := flag.NewFlagSet("hotels", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var c hotelCommonOpts
@@ -110,18 +110,23 @@ FLAGS
 		return err
 	}
 
+	hotelArgs := flights.HotelArgs{
+		Location:     c.location,
+		CheckInDate:  ci,
+		CheckOutDate: co,
+		HotelOptions: opts,
+	}
+	if err := hotelArgs.Validate(); err != nil {
+		return err
+	}
+
 	sess, err := flights.NewBrowserSession()
 	if err != nil {
 		return fmt.Errorf("session: %v", err)
 	}
 	defer sess.Close()
 
-	hotels, err := sess.GetHotelOffers(context.Background(), flights.HotelArgs{
-		Location:     c.location,
-		CheckInDate:  ci,
-		CheckOutDate: co,
-		HotelOptions: opts,
-	})
+	hotels, err := sess.GetHotelOffers(ctx, hotelArgs)
 	if err != nil {
 		return err
 	}
@@ -234,7 +239,7 @@ func writeHotelsJSON(w io.Writer, c hotelCommonOpts, ci, co time.Time, hotels []
 
 // --- hotel-pricegraph subcommand ---
 
-func runHotelPriceGraph(argv []string, out io.Writer) error {
+func runHotelPriceGraph(ctx context.Context, argv []string, out io.Writer) error {
 	fs := flag.NewFlagSet("hotel-pricegraph", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var c hotelCommonOpts
@@ -283,20 +288,25 @@ FLAGS
 		return err
 	}
 
-	sess, err := flights.NewBrowserSession()
-	if err != nil {
-		return fmt.Errorf("session: %v", err)
-	}
-	defer sess.Close()
-
-	offers, err := sess.GetHotelPriceGraph(context.Background(), flights.HotelPriceGraphArgs{
+	hpgArgs := flights.HotelPriceGraphArgs{
 		Location:       c.location,
 		RangeStartDate: startD,
 		RangeEndDate:   endD,
 		Nights:         *nights,
 		StepDays:       *step,
 		HotelOptions:   opts,
-	})
+	}
+	if err := hpgArgs.Validate(); err != nil {
+		return err
+	}
+
+	sess, err := flights.NewBrowserSession()
+	if err != nil {
+		return fmt.Errorf("session: %v", err)
+	}
+	defer sess.Close()
+
+	offers, err := sess.GetHotelPriceGraph(ctx, hpgArgs)
 	if err != nil {
 		return err
 	}

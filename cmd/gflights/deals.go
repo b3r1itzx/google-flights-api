@@ -70,7 +70,7 @@ type deal struct {
 	Currency string  `json:"currency"`
 }
 
-func runDeals(argv []string, out io.Writer) error {
+func runDeals(ctx context.Context, argv []string, out io.Writer) error {
 	fs := flag.NewFlagSet("deals", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var c commonOpts
@@ -146,13 +146,24 @@ FLAGS
 
 	srcCities, srcAirports := splitLocations(c.from)
 
+	// Validate the shared range once, before the browser: every destination
+	// reuses these dates, so a bad range would otherwise launch a browser and
+	// fail N times identically.
+	probe := flights.PriceGraphArgs{
+		RangeStartDate: startD, RangeEndDate: endD, TripLength: *duration,
+		SrcAirports: []string{"AAA"}, DstAirports: []string{"BBB"}, Options: opts,
+	}
+	if err := probe.Validate(); err != nil {
+		return err
+	}
+
 	sess, err := flights.NewBrowserSession()
 	if err != nil {
 		return fmt.Errorf("session: %v", err)
 	}
 	defer sess.Close()
 
-	deals, failures := searchDeals(context.Background(), sess, dealParams{
+	deals, failures := searchDeals(ctx, sess, dealParams{
 		srcCities: srcCities, srcAirports: srcAirports,
 		start: startD, end: endD, duration: *duration,
 		opts: opts, dests: dests, concurrency: *concurrency,

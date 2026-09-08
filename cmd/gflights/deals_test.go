@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"strings"
@@ -188,7 +189,7 @@ func TestRunDealsFlagValidation(t *testing.T) {
 		{"bad currency", []string{"--from", "ORF", "--to", "MCO", "--start", "2026-11-01", "--end", "2026-11-30", "--currency", "DOLLARS"}, "invalid --currency"},
 	}
 	for _, c := range cases {
-		err := runDeals(c.argv, io.Discard)
+		err := runDeals(context.Background(), c.argv, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), c.wantErr) {
 			t.Errorf("%s: err = %v, want containing %q", c.name, err, c.wantErr)
 		}

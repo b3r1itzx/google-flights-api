@@ -49,6 +49,11 @@ func NewBrowserSession() (*BrowserSession, error) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.NoSandbox,
 		chromedp.Flag("disable-dev-shm-usage", true),
+		// Tie Chrome's lifetime to this process: if we die without running
+		// Close (SIGKILL, a subprocess timeout, a panic that skips defers),
+		// the OS still reaps the browser instead of leaving a ~200MB orphan
+		// reparented to init. See hardenChromeCmd (platform-specific).
+		chromedp.ModifyCmdFunc(hardenChromeCmd),
 	)
 	if bin := os.Getenv("CHROME_BIN"); bin != "" {
 		opts = append(opts, chromedp.ExecPath(bin))

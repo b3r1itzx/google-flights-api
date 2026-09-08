@@ -11,16 +11,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"testing"
 	"time"
 )
 
-func runJSON(t *testing.T, run func([]string, io.Writer) error, argv []string, out interface{}) {
+func runJSON(t *testing.T, run func(context.Context, []string, io.Writer) error, argv []string, out interface{}) {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := run(append(argv, "--json"), &buf); err != nil {
+	if err := run(context.Background(), append(argv, "--json"), &buf); err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal(buf.Bytes(), out); err != nil {
@@ -271,7 +272,7 @@ func TestLiveTextOutput(t *testing.T) {
 	}
 	depart := time.Now().AddDate(0, 2, 0)
 	var buf bytes.Buffer
-	err := runOffers([]string{
+	err := runOffers(context.Background(), []string{
 		"--from", "JFK", "--to", "LHR",
 		"--depart", day(depart), "--return", day(depart.AddDate(0, 0, 7)),
 		"--limit", "3",

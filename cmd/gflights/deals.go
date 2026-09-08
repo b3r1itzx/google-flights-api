@@ -26,10 +26,14 @@ var destinationPresets = map[string][]string{
 	},
 }
 
-// deal is the cheapest round-trip found for one destination.
+// deal is the cheapest round-trip found for one destination, plus how much of
+// a deal that cheapest fare is relative to the route's own typical fare over
+// the searched range.
 type deal struct {
 	Dest     string  `json:"dest"`
-	Price    float64 `json:"price"`
+	Price    float64 `json:"price"`     // cheapest fare found in the range
+	Typical  float64 `json:"typical"`   // median fare over the range (the "normal" price)
+	Discount float64 `json:"discount"`  // percent below typical: (typical-price)/typical*100
 	Depart   string  `json:"depart"`
 	Return   string  `json:"return"`
 	Currency string  `json:"currency"`
@@ -46,15 +50,22 @@ func runDeals(argv []string, out io.Writer) error {
 		duration    = fs.Int("duration", 7, "trip length in days")
 		preset      = fs.String("preset", "", "built-in destination set to include: "+presetNames())
 		concurrency = fs.Int("concurrency", 4, "number of destinations to search in parallel")
-		limit       = fs.Int("limit", 0, "show only the N cheapest destinations (0 = all)")
+		limit       = fs.Int("limit", 0, "show only the top N destinations after sorting (0 = all)")
+		sortBy      = fs.String("sort", "price", "rank by: price (cheapest first) | deal (biggest % below typical first)")
+		minDiscount = fs.Float64("min-discount", 0, "only show destinations at least this percent below their typical fare (impulse-deal filter)")
 	)
 	fs.Usage = func() {
 		fmt.Fprint(out, `deals — cheapest destinations from an origin, ranked (fan-out explore).
 
 Runs one price-graph search per destination and reports the cheapest
-round-trip per destination, sorted cheapest first. Destinations come from
---to (comma-separated) and/or --preset. This is the origin-wide "explore"
-the underlying API has no single call for.
+round-trip per destination. Each destination also gets a "deal score": how
+far (percent) its cheapest fare sits below the route's own typical (median)
+fare over the range. Destinations come from --to (comma-separated) and/or
+--preset. This is the origin-wide "explore" the underlying API has no single
+call for.
+
+For impulse deal alerts, rank by discount and filter to genuine dips:
+  --sort deal --min-discount 25
 
 USAGE
   gflights deals --from <city|IATA> [--to <d1,d2,...>] [--preset us-major] \
@@ -62,6 +73,8 @@ USAGE
 
 EXAMPLE
   gflights deals --from ORF --preset us-major --start 2026-11-01 --end 2026-11-30 --duration 4 --limit 10
+  gflights deals --from ORF --preset us-major --start 2026-11-01 --end 2027-01-31 \
+      --sort deal --min-discount 25 --json
   gflights deals --from ORF --to MCO,ATL,LAS,DEN --start 2026-11-01 --end 2026-11-30 --json
 
 FLAGS
@@ -114,10 +127,11 @@ FLAGS
 		opts: opts, dests: dests, concurrency: *concurrency,
 	})
 
-	sort.SliceStable(deals, func(i, j int) bool { return deals[i].Price < deals[j].Price })
 	totalWithOffers := len(deals)
-	if *limit > 0 && len(deals) > *limit {
-		deals = deals[:*limit]
+
+	deals, err = rankDeals(deals, *sortBy, *minDiscount, *limit)
+	if err != nil {
+		return err
 	}
 
 	if c.jsonOut {
@@ -125,6 +139,33 @@ FLAGS
 	}
 	writeDealsText(out, c, startD, endD, *duration, len(dests), totalWithOffers, deals, failures)
 	return nil
+}
+
+// rankDeals applies the impulse-deal filter (min percent below typical), sorts
+// by the chosen key, and trims to the top limit. sortBy: "price" (cheapest
+// first) or "deal"/"discount" (biggest discount first).
+func rankDeals(deals []deal, sortBy string, minDiscount float64, limit int) ([]deal, error) {
+	if minDiscount > 0 {
+		kept := deals[:0]
+		for _, d := range deals {
+			if d.Discount >= minDiscount {
+				kept = append(kept, d)
+			}
+		}
+		deals = kept
+	}
+	switch strings.ToLower(sortBy) {
+	case "price", "":
+		sort.SliceStable(deals, func(i, j int) bool { return deals[i].Price < deals[j].Price })
+	case "deal", "discount":
+		sort.SliceStable(deals, func(i, j int) bool { return deals[i].Discount > deals[j].Discount })
+	default:
+		return nil, fmt.Errorf("invalid --sort %q (want price|deal)", sortBy)
+	}
+	if limit > 0 && len(deals) > limit {
+		deals = deals[:limit]
+	}
+	return deals, nil
 }
 
 func presetNames() string {
@@ -233,9 +274,16 @@ func searchDeals(ctx context.Context, sess *flights.BrowserSession, p dealParams
 				failures[dest] = "no offers with a price"
 				return
 			}
+			typical := medianOfferPrice(offers)
+			discount := 0.0
+			if typical > 0 {
+				discount = (typical - best.Price) / typical * 100
+			}
 			deals = append(deals, deal{
 				Dest:     dest,
 				Price:    best.Price,
+				Typical:  typical,
+				Discount: discount,
 				Depart:   best.StartDate.Format("2006-01-02"),
 				Return:   best.ReturnDate.Format("2006-01-02"),
 				Currency: currencyCode,
@@ -261,6 +309,27 @@ func cheapestOffer(offers []flights.Offer) (flights.Offer, bool) {
 	return best, found
 }
 
+// medianOfferPrice is the median of the priced offers — the route's "typical"
+// fare over the range. Median (not mean) so a few expensive holiday dates
+// don't inflate the baseline and hide a genuine dip. Returns 0 if none priced.
+func medianOfferPrice(offers []flights.Offer) float64 {
+	prices := make([]float64, 0, len(offers))
+	for _, o := range offers {
+		if o.Price > 0 {
+			prices = append(prices, o.Price)
+		}
+	}
+	if len(prices) == 0 {
+		return 0
+	}
+	sort.Float64s(prices)
+	n := len(prices)
+	if n%2 == 1 {
+		return prices[n/2]
+	}
+	return (prices[n/2-1] + prices[n/2]) / 2
+}
+
 func writeDealsText(w io.Writer, c commonOpts, start, end time.Time, duration, nDests, totalWithOffers int, deals []deal, failures map[string]string) {
 	shown := ""
 	if len(deals) < totalWithOffers {
@@ -268,11 +337,11 @@ func writeDealsText(w io.Writer, c commonOpts, start, end time.Time, duration, n
 	}
 	fmt.Fprintf(w, "%s -> %d destinations  |  %s..%s  |  %d-day trip  |  %d with offers%s\n",
 		c.from, nDests, start.Format("2006-01-02"), end.Format("2006-01-02"), duration, totalWithOffers, shown)
-	fmt.Fprintf(w, "%-14s  %12s  %-12s  %-12s\n", "DESTINATION", "PRICE", "DEPART", "RETURN")
-	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 56))
+	fmt.Fprintf(w, "%-14s  %12s  %10s  %8s  %-12s  %-12s\n", "DESTINATION", "PRICE", "TYPICAL", "DEAL", "DEPART", "RETURN")
+	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 74))
 	for _, d := range deals {
-		fmt.Fprintf(w, "%-14s  %10.2f %s  %-12s  %-12s\n",
-			d.Dest, d.Price, d.Currency, d.Depart, d.Return)
+		fmt.Fprintf(w, "%-14s  %10.2f %s  %8.0f  %6.0f%%  %-12s  %-12s\n",
+			d.Dest, d.Price, d.Currency, d.Typical, d.Discount, d.Depart, d.Return)
 	}
 	if len(failures) > 0 {
 		names := make([]string, 0, len(failures))

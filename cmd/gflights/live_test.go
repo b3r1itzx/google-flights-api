@@ -150,6 +150,8 @@ func TestLiveDeals(t *testing.T) {
 		Deals []struct {
 			Dest     string  `json:"dest"`
 			Price    float64 `json:"price"`
+			Typical  float64 `json:"typical"`
+			Discount float64 `json:"discount"`
 			Depart   string  `json:"depart"`
 			Return   string  `json:"return"`
 			Currency string  `json:"currency"`
@@ -168,6 +170,10 @@ func TestLiveDeals(t *testing.T) {
 	for i, d := range out.Deals {
 		if d.Price <= 0 || d.Dest == "" || d.Currency != "USD" {
 			t.Errorf("deal %d incomplete: %+v", i, d)
+		}
+		// typical must be a sane baseline: >= the cheapest fare found
+		if d.Typical < d.Price {
+			t.Errorf("deal %d typical %v below its own cheapest %v", i, d.Typical, d.Price)
 		}
 		if _, err := time.Parse("2006-01-02", d.Depart); err != nil {
 			t.Errorf("deal %d bad depart %q", i, d.Depart)

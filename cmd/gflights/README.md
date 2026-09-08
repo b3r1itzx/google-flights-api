@@ -130,39 +130,53 @@ gflights offers --from JFK --to FCO --depart 2026-07-06 --trip-type one-way
 
 Finds the cheapest destinations from one origin — the origin-wide "explore"
 the underlying API has no single call for. It runs one `pricegraph` search per
-destination (in parallel) and reports the cheapest round-trip per destination,
-sorted cheapest first. Destinations come from `--to` (comma-separated),
-`--preset`, or both.
+destination (in parallel) and reports the cheapest round-trip per destination.
+Destinations come from `--to` (comma-separated), `--preset`, or both.
+
+Each destination also gets a **deal score**: how far (percent) its cheapest
+fare sits below the route's own *typical* fare — the median across the searched
+range. That's what separates "cheap route" from "unusually cheap right now,"
+which is what an impulse-deal alert wants to surface.
 
 Extra flags (plus all the common flags; `--to` is a comma-separated **list**
 here, and `--from` is the only required route flag):
 
-| Flag            | Default | Notes                                                          |
-|-----------------|---------|----------------------------------------------------------------|
-| `--start`       | _req._  | `YYYY-MM-DD`. Range start (≥ today).                           |
-| `--end`         | _req._  | `YYYY-MM-DD`. Within 161 days of `--start`.                    |
-| `--duration`    | `7`     | Trip length in days.                                           |
-| `--preset`      | -       | Built-in destination set. Available: `us-major` (~30 airports).|
-| `--concurrency` | `4`     | Destinations searched in parallel.                             |
-| `--limit`       | `0`     | Show only the N cheapest destinations (`0` = all).             |
+| Flag             | Default | Notes                                                                 |
+|------------------|---------|-----------------------------------------------------------------------|
+| `--start`        | _req._  | `YYYY-MM-DD`. Range start (≥ today).                                  |
+| `--end`          | _req._  | `YYYY-MM-DD`. Within 161 days of `--start`.                           |
+| `--duration`     | `7`     | Trip length in days.                                                  |
+| `--preset`       | -       | Built-in destination set. Available: `us-major` (~30 airports).       |
+| `--sort`         | `price` | `price` (cheapest first) or `deal` (biggest % below typical first).   |
+| `--min-discount` | `0`     | Only show destinations at least this percent below their typical fare.|
+| `--concurrency`  | `4`     | Destinations searched in parallel.                                    |
+| `--limit`        | `0`     | Show only the top N after sorting (`0` = all).                        |
 
 The origin is removed from the destination list automatically, and duplicates
 are de-duped (case-insensitive). Each destination costs one browser search
 (~6–8s) but they run `--concurrency` at a time, so 30 destinations at
-`--concurrency 6` finishes in ~20s.
+`--concurrency 6` finishes in ~20–45s.
 
 ```sh
-# Hottest deals from Norfolk across a set of cities
+# Cheapest destinations from Norfolk across a set of cities
 gflights deals --from ORF --to MCO,ATL,LAS,DEN,BOS \
   --start 2026-11-01 --end 2026-11-30 --duration 4
 
-# Same, but sweep ~30 major US airports and show the 10 cheapest
+# Impulse-deal feed: only fares 25%+ below their own typical, biggest drop first
 gflights deals --from ORF --preset us-major \
-  --start 2026-11-01 --end 2026-11-30 --duration 4 --concurrency 6 --limit 10
+  --start 2026-11-01 --end 2027-01-31 --duration 4 \
+  --sort deal --min-discount 25 --json
 ```
 
+The `TYPICAL` column (median fare over the range) and `DEAL` column (percent
+below typical) accompany the cheapest price. **Cheapest ≠ best deal**: a route
+that's always cheap scores a low discount, while a normally-expensive route on
+an unusual dip scores high — rank by `--sort deal` for the latter.
+
 Destinations with no priced offer in the range are dropped from the ranking and
-listed separately (text) / under `failures` (JSON).
+listed separately (text) / under `failures` (JSON). The upstream calendar RPC
+occasionally returns empty for a destination on a given run, so the failure set
+can vary run-to-run; a production alert loop should retry empties.
 
 ### Hotel common flags (`hotels`, `hotel-pricegraph`)
 
@@ -320,7 +334,7 @@ hint). `url` is optional (omitted if URL serialization failed).
   "total_with_offers": 3,
   "count": 3,
   "deals": [
-    { "dest": "ATL", "price": 80, "depart": "2026-11-03", "return": "2026-11-07", "currency": "USD" }
+    { "dest": "ATL", "price": 80, "typical": 160, "discount": 50, "depart": "2026-11-03", "return": "2026-11-07", "currency": "USD" }
   ],
   "failures": [
     { "dest": "SomePlace", "reason": "no offers with a price" }
@@ -328,8 +342,10 @@ hint). `url` is optional (omitted if URL serialization failed).
 }
 ```
 
-`deals` is sorted cheapest first; `count` is how many are shown (after
-`--limit`), `total_with_offers` how many had any offer. The single best deal is
+`deals` is ordered by `--sort` (cheapest first, or biggest `discount` first);
+`count` is how many are shown (after `--min-discount` and `--limit`),
+`total_with_offers` how many had any offer. Each entry carries `typical` (median
+fare) and `discount` (percent below typical). The single best deal is
 `.deals[0]`.
 
 ### `hotels --json`

@@ -65,6 +65,73 @@ func TestCheapestOffer(t *testing.T) {
 	}
 }
 
+func TestMedianOfferPrice(t *testing.T) {
+	// odd count (5 priced), ignores the zero-priced entry
+	if got := medianOfferPrice([]flights.Offer{{Price: 0}, {Price: 300}, {Price: 100}, {Price: 200}, {Price: 500}, {Price: 400}}); got != 300 {
+		t.Errorf("odd median = %v, want 300", got)
+	}
+	// even count -> average of the two middle values
+	if got := medianOfferPrice([]flights.Offer{{Price: 100}, {Price: 200}, {Price: 300}, {Price: 500}}); got != 250 {
+		t.Errorf("even median = %v, want 250", got)
+	}
+	// a couple of expensive dates must not drag the baseline like a mean would
+	if got := medianOfferPrice([]flights.Offer{{Price: 100}, {Price: 110}, {Price: 120}, {Price: 900}, {Price: 950}}); got != 120 {
+		t.Errorf("skewed median = %v, want 120 (mean would be ~436)", got)
+	}
+	if got := medianOfferPrice(nil); got != 0 {
+		t.Errorf("empty median = %v, want 0", got)
+	}
+}
+
+func TestRankDeals(t *testing.T) {
+	base := func() []deal {
+		return []deal{
+			{Dest: "ATL", Price: 80, Discount: 20},
+			{Dest: "MCO", Price: 123, Discount: 50},
+			{Dest: "LAS", Price: 227, Discount: 5},
+		}
+	}
+
+	// sort by price (cheapest first)
+	got, err := rankDeals(base(), "price", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Dest != "ATL" || got[2].Dest != "LAS" {
+		t.Errorf("price sort = %v", dests(got))
+	}
+
+	// sort by deal (biggest discount first)
+	got, _ = rankDeals(base(), "deal", 0, 0)
+	if got[0].Dest != "MCO" || got[1].Dest != "ATL" || got[2].Dest != "LAS" {
+		t.Errorf("deal sort = %v", dests(got))
+	}
+
+	// min-discount filter drops shallow deals
+	got, _ = rankDeals(base(), "deal", 20, 0)
+	if len(got) != 2 || got[0].Dest != "MCO" || got[1].Dest != "ATL" {
+		t.Errorf("min-discount filter = %v", dests(got))
+	}
+
+	// limit trims after sorting
+	got, _ = rankDeals(base(), "deal", 0, 1)
+	if len(got) != 1 || got[0].Dest != "MCO" {
+		t.Errorf("limit = %v", dests(got))
+	}
+
+	if _, err := rankDeals(base(), "bogus", 0, 0); err == nil {
+		t.Error("invalid sort should error")
+	}
+}
+
+func dests(ds []deal) []string {
+	out := make([]string, len(ds))
+	for i, d := range ds {
+		out[i] = d.Dest
+	}
+	return out
+}
+
 func TestRunDealsFlagValidation(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -88,8 +155,8 @@ func TestRunDealsFlagValidation(t *testing.T) {
 
 func testDeals() []deal {
 	return []deal{
-		{Dest: "ATL", Price: 80, Depart: "2026-11-03", Return: "2026-11-07", Currency: "USD"},
-		{Dest: "MCO", Price: 123, Depart: "2026-11-03", Return: "2026-11-07", Currency: "USD"},
+		{Dest: "ATL", Price: 80, Typical: 160, Discount: 50, Depart: "2026-11-03", Return: "2026-11-07", Currency: "USD"},
+		{Dest: "MCO", Price: 123, Typical: 150, Discount: 18, Depart: "2026-11-03", Return: "2026-11-07", Currency: "USD"},
 	}
 }
 
@@ -102,7 +169,7 @@ func TestWriteDealsText(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"ORF -> 5 destinations", "2026-11-01..2026-11-30", "4-day trip", "2 with offers",
-		"ATL", "80.00 USD", "MCO", "1 destination(s) returned no offers: BOS",
+		"TYPICAL", "DEAL", "ATL", "80.00 USD", "50%", "MCO", "1 destination(s) returned no offers: BOS",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text output missing %q:\n%s", want, out)
@@ -127,9 +194,11 @@ func TestWriteDealsJSON(t *testing.T) {
 			Duration   int    `json:"duration_days"`
 		} `json:"query"`
 		Deals []struct {
-			Dest   string  `json:"dest"`
-			Price  float64 `json:"price"`
-			Depart string  `json:"depart"`
+			Dest     string  `json:"dest"`
+			Price    float64 `json:"price"`
+			Typical  float64 `json:"typical"`
+			Discount float64 `json:"discount"`
+			Depart   string  `json:"depart"`
 		} `json:"deals"`
 		Failures []struct {
 			Dest   string `json:"dest"`
@@ -145,7 +214,7 @@ func TestWriteDealsJSON(t *testing.T) {
 	if j.Query.From != "ORF" || j.Query.RangeStart != "2026-11-01" || j.Query.Duration != 4 {
 		t.Errorf("query = %+v", j.Query)
 	}
-	if j.Deals[0].Dest != "ATL" || j.Deals[0].Price != 80 {
+	if j.Deals[0].Dest != "ATL" || j.Deals[0].Price != 80 || j.Deals[0].Typical != 160 || j.Deals[0].Discount != 50 {
 		t.Errorf("deal[0] = %+v", j.Deals[0])
 	}
 	if len(j.Failures) != 1 || j.Failures[0].Dest != "BOS" {

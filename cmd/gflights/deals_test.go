@@ -37,6 +37,18 @@ func TestResolveDestinations(t *testing.T) {
 		}
 	}
 
+	// multiple presets combine, deduped across sets
+	got, err = resolveDestinations("", "caribbean,europe", "ORF")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := len(destinationPresets["caribbean"]) + len(destinationPresets["europe"]); len(got) != want {
+		t.Errorf("combined preset count = %d, want %d", len(got), want)
+	}
+	if !contains(got, "SJU") || !contains(got, "LHR") {
+		t.Errorf("combined preset missing expected members: %v", got)
+	}
+
 	// errors
 	if _, err := resolveDestinations("", "", "ORF"); err == nil {
 		t.Error("empty destinations should error")
@@ -44,8 +56,29 @@ func TestResolveDestinations(t *testing.T) {
 	if _, err := resolveDestinations("", "no-such-preset", "ORF"); err == nil {
 		t.Error("unknown preset should error")
 	}
+	if _, err := resolveDestinations("", "caribbean,bogus", "ORF"); err == nil {
+		t.Error("one bad preset in a list should error")
+	}
 	if _, err := resolveDestinations("ORF", "", "ORF"); err == nil {
 		t.Error("destinations that are all the origin should error")
+	}
+}
+
+func TestDestinationPresetsWellFormed(t *testing.T) {
+	for name, codes := range destinationPresets {
+		if len(codes) == 0 {
+			t.Errorf("preset %q is empty", name)
+		}
+		seen := map[string]bool{}
+		for _, code := range codes {
+			if !isAirportCode(code) {
+				t.Errorf("preset %q has non-IATA entry %q", name, code)
+			}
+			if seen[code] {
+				t.Errorf("preset %q has duplicate %q", name, code)
+			}
+			seen[code] = true
+		}
 	}
 }
 
@@ -122,6 +155,15 @@ func TestRankDeals(t *testing.T) {
 	if _, err := rankDeals(base(), "bogus", 0, 0); err == nil {
 		t.Error("invalid sort should error")
 	}
+}
+
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 func dests(ds []deal) []string {

@@ -146,11 +146,19 @@ here, and `--from` is the only required route flag):
 | `--start`        | _req._  | `YYYY-MM-DD`. Range start (≥ today).                                  |
 | `--end`          | _req._  | `YYYY-MM-DD`. Within 161 days of `--start`.                           |
 | `--duration`     | `7`     | Trip length in days.                                                  |
-| `--preset`       | -       | Built-in destination set. Available: `us-major` (~30 airports).       |
+| `--preset`       | -       | Built-in destination set(s), comma-separated. See table below.        |
 | `--sort`         | `price` | `price` (cheapest first) or `deal` (biggest % below typical first).   |
 | `--min-discount` | `0`     | Only show destinations at least this percent below their typical fare.|
 | `--concurrency`  | `4`     | Destinations searched in parallel.                                    |
 | `--limit`        | `0`     | Show only the top N after sorting (`0` = all).                        |
+
+Built-in presets (combine with commas, e.g. `--preset caribbean,europe`):
+
+| Preset      | Contents                                                       |
+|-------------|----------------------------------------------------------------|
+| `us-major`  | ~30 busiest US airports.                                       |
+| `caribbean` | 12 popular Caribbean leisure spots (SJU, PUJ, MBJ, NAS, AUA, …). |
+| `europe`    | 12 popular European destinations (LHR, CDG, FCO, BCN, MAD, …).  |
 
 The origin is removed from the destination list automatically, and duplicates
 are de-duped (case-insensitive). Each destination costs one browser search
@@ -162,9 +170,10 @@ are de-duped (case-insensitive). Each destination costs one browser search
 gflights deals --from ORF --to MCO,ATL,LAS,DEN,BOS \
   --start 2026-11-01 --end 2026-11-30 --duration 4
 
-# Impulse-deal feed: only fares 25%+ below their own typical, biggest drop first
-gflights deals --from ORF --preset us-major \
-  --start 2026-11-01 --end 2027-01-31 --duration 4 \
+# Impulse-deal feed across US + beach + Europe: fares 25%+ below typical,
+# biggest drop first
+gflights deals --from ORF --preset us-major,caribbean,europe \
+  --start 2026-11-01 --end 2027-01-31 --duration 7 \
   --sort deal --min-discount 25 --json
 ```
 
@@ -175,8 +184,11 @@ an unusual dip scores high — rank by `--sort deal` for the latter.
 
 Destinations with no priced offer in the range are dropped from the ranking and
 listed separately (text) / under `failures` (JSON). The upstream calendar RPC
-occasionally returns empty for a destination on a given run, so the failure set
-can vary run-to-run; a production alert loop should retry empties.
+occasionally returns empty for a destination — more so under a busy parallel
+sweep — so `deals` automatically retries the empties once at low concurrency
+before reporting them as failures. In practice that recovers essentially all
+transient drops (a 24-destination international sweep goes from ~half empty to
+complete).
 
 ### Hotel common flags (`hotels`, `hotel-pricegraph`)
 

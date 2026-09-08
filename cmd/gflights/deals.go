@@ -16,13 +16,44 @@ import (
 )
 
 // destinationPresets are built-in destination lists so callers don't have to
-// type long airport lists. Keys are passed to --preset.
+// type long airport lists. Keys are passed to --preset (comma-separated to
+// combine several).
 var destinationPresets = map[string][]string{
 	// ~30 busiest US airports by passenger volume.
 	"us-major": {
 		"ATL", "LAX", "ORD", "DFW", "DEN", "JFK", "SFO", "LAS", "MCO", "SEA",
 		"EWR", "MIA", "PHX", "IAH", "BOS", "MSP", "FLL", "DTW", "PHL", "LGA",
 		"CLT", "BWI", "SLC", "SAN", "IAD", "DCA", "TPA", "PDX", "HNL", "AUS",
+	},
+	// Popular Caribbean leisure destinations well-served from the US.
+	"caribbean": {
+		"SJU", // San Juan, Puerto Rico
+		"PUJ", // Punta Cana, Dominican Republic
+		"MBJ", // Montego Bay, Jamaica
+		"NAS", // Nassau, Bahamas
+		"AUA", // Aruba
+		"SXM", // St. Maarten
+		"BGI", // Bridgetown, Barbados
+		"PLS", // Providenciales, Turks & Caicos
+		"STT", // St. Thomas, US Virgin Islands
+		"GCM", // Grand Cayman
+		"CUR", // Curaçao
+		"ANU", // Antigua
+	},
+	// Popular European leisure destinations well-served from the US.
+	"europe": {
+		"LHR", // London
+		"CDG", // Paris
+		"FCO", // Rome
+		"BCN", // Barcelona
+		"MAD", // Madrid
+		"AMS", // Amsterdam
+		"DUB", // Dublin
+		"LIS", // Lisbon
+		"ATH", // Athens
+		"FRA", // Frankfurt
+		"MUC", // Munich
+		"CPH", // Copenhagen
 	},
 }
 
@@ -48,7 +79,7 @@ func runDeals(argv []string, out io.Writer) error {
 		start       = fs.String("start", "", "range start date YYYY-MM-DD (required)")
 		end         = fs.String("end", "", "range end date YYYY-MM-DD (required); within 161 days of start")
 		duration    = fs.Int("duration", 7, "trip length in days")
-		preset      = fs.String("preset", "", "built-in destination set to include: "+presetNames())
+		preset      = fs.String("preset", "", "built-in destination set(s), comma-separated: "+presetNames())
 		concurrency = fs.Int("concurrency", 4, "number of destinations to search in parallel")
 		limit       = fs.Int("limit", 0, "show only the top N destinations after sorting (0 = all)")
 		sortBy      = fs.String("sort", "price", "rank by: price (cheapest first) | deal (biggest % below typical first)")
@@ -181,8 +212,9 @@ func presetNames() string {
 }
 
 // resolveDestinations builds the destination list from a comma-separated --to
-// and an optional preset, de-duplicated and with the origin removed. Origin
-// tokens are compared case-insensitively against each destination token.
+// and an optional comma-separated list of --preset names, de-duplicated and
+// with the origin removed. Origin tokens are compared case-insensitively
+// against each destination token.
 func resolveDestinations(to, preset, from string) ([]string, error) {
 	var list []string
 	for _, tok := range strings.Split(to, ",") {
@@ -190,10 +222,14 @@ func resolveDestinations(to, preset, from string) ([]string, error) {
 			list = append(list, t)
 		}
 	}
-	if preset != "" {
-		p, ok := destinationPresets[preset]
+	for _, name := range strings.Split(preset, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		p, ok := destinationPresets[name]
 		if !ok {
-			return nil, fmt.Errorf("unknown --preset %q (have: %s)", preset, presetNames())
+			return nil, fmt.Errorf("unknown --preset %q (have: %s)", name, presetNames())
 		}
 		list = append(list, p...)
 	}
@@ -231,20 +267,48 @@ type dealParams struct {
 	concurrency            int
 }
 
-// searchDeals runs one price-graph search per destination (bounded by
-// p.concurrency) and returns the cheapest round-trip for each, plus a map of
-// destination -> error for those that failed or had no offers.
+// searchDeals runs one price-graph search per destination and returns the
+// cheapest round-trip for each, plus a map of destination -> reason for those
+// that still had no offer. An empty/errored destination is often transient
+// (the calendar RPC returns empty, or the price-graph UI click loses a race
+// under load), so failures are retried once at low concurrency — important for
+// international routes where a busy first pass drops many.
 func searchDeals(ctx context.Context, sess *flights.BrowserSession, p dealParams) ([]deal, map[string]string) {
+	deals, failures := runDealBatch(ctx, sess, p, p.dests, p.concurrency)
+
+	if len(failures) > 0 {
+		retry := make([]string, 0, len(failures))
+		for d := range failures {
+			retry = append(retry, d)
+		}
+		retryConc := 2
+		if retryConc > p.concurrency {
+			retryConc = p.concurrency
+		}
+		more, stillFailed := runDealBatch(ctx, sess, p, retry, retryConc)
+		deals = append(deals, more...)
+		failures = stillFailed
+	}
+	return deals, failures
+}
+
+// runDealBatch searches the given destinations concurrently (bounded by
+// concurrency) and returns the deals found plus the destinations that yielded
+// no priced offer.
+func runDealBatch(ctx context.Context, sess *flights.BrowserSession, p dealParams, dests []string, concurrency int) ([]deal, map[string]string) {
+	if concurrency < 1 {
+		concurrency = 1
+	}
 	var (
 		mu       sync.Mutex
 		deals    []deal
 		failures = map[string]string{}
 		wg       sync.WaitGroup
-		sem      = make(chan struct{}, p.concurrency)
+		sem      = make(chan struct{}, concurrency)
 	)
 	currencyCode := p.opts.Currency.String()
 
-	for _, dest := range p.dests {
+	for _, dest := range dests {
 		wg.Add(1)
 		go func(dest string) {
 			defer wg.Done()

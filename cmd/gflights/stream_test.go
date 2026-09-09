@@ -51,6 +51,25 @@ func TestNDJSONEmitConcurrent(t *testing.T) {
 	}
 }
 
+func TestOfferLineCarriesURL(t *testing.T) {
+	o := fixtureOffer()
+	line := offerLine(o, testArgs(), "https://www.google.com/travel/flights/search?tfs=abc")
+	if line["type"] != "offer" {
+		t.Errorf("type = %v", line["type"])
+	}
+	if line["url"] != "https://www.google.com/travel/flights/search?tfs=abc" {
+		t.Errorf("offer line missing booking url: %v", line["url"])
+	}
+	if line["price"] != 771.0 {
+		t.Errorf("price = %v", line["price"])
+	}
+	// no url passed -> key omitted, not an empty string
+	bare := offerLine(o, testArgs(), "")
+	if _, ok := bare["url"]; ok {
+		t.Errorf("empty url should be omitted, got %v", bare["url"])
+	}
+}
+
 func TestStreamLineShapes(t *testing.T) {
 	var buf bytes.Buffer
 	nd := newNDJSON(&buf)

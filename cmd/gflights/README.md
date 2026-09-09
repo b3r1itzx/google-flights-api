@@ -461,12 +461,17 @@ $ gflights deals --from ORF --preset us-major --start … --end … --stream
 {"type":"done","count":28,"failures":2}
 ```
 
-Line types: `meta` (query echo, first), `deal` (deals), `fare` (pricegraph, one
-per departure date), `price_range` (offers, emitted before any `offer`),
-`offer` (offers), `failure` (a destination that yielded nothing, after retry),
-`done` (always last, with `count` emitted and `failures`). In `deals --stream`,
-`--min-discount` still filters inline; `--sort` and `--limit` are ignored (the
-consumer orders the stream).
+Line types: `meta` (query echo, first — for `offers` it carries the booking
+`url`), `deal` (deals), `fare` (pricegraph, one per departure date),
+`price_range` (offers, emitted before any `offer`), `offer` (offers — each also
+carries the booking `url` so a consumer rendering offers one at a time has a
+book link without buffering; it is the search-level Google Flights deep link,
+the same value `--json` puts at top level, since this API exposes no distinct
+per-itinerary URL), `failure` (a destination that yielded nothing, after
+retry), `done` (always last, with `count` emitted and `failures`). In
+`deals --stream`, `--min-discount` still filters inline; `--sort` and `--limit`
+are ignored (the consumer orders the stream). The booking `url` is omitted when
+`--url=false`.
 
 ## Exit codes
 

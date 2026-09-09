@@ -54,6 +54,7 @@ type streamMeta struct {
 	Duration int    `json:"duration_days,omitempty"`
 	Count    int    `json:"destinations,omitempty"`
 	Currency string `json:"currency,omitempty"`
+	URL      string `json:"url,omitempty"` // offers: the Google Flights booking deep link
 }
 
 type streamDeal struct {

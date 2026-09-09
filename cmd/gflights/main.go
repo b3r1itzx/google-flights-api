@@ -554,7 +554,7 @@ FLAGS
 		nd.emit(streamMeta{
 			Type: "meta", Command: "offers", From: c.from, To: c.to,
 			Depart: args.Date.Format("2006-01-02"), Return: args.ReturnDate.Format("2006-01-02"),
-			Count: len(offers), Currency: args.Currency.String(),
+			Count: len(offers), Currency: args.Currency.String(), URL: url,
 		})
 		for _, o := range offers {
 			nd.emit(offerLine(o, args, url))
@@ -571,10 +571,14 @@ FLAGS
 }
 
 // offerLine builds one streamed offer object, reusing the same per-offer shape
-// as --json (fullOfferJSON) under a "type":"offer" tag.
+// as --json (fullOfferJSON) under a "type":"offer" tag. Each offer carries the
+// booking url so a consumer rendering offers one at a time has a book link
+// without waiting for a separate line. Note it is the search-level Google
+// Flights deep link (the same value --json puts at top level) applied to every
+// itinerary — this API does not expose a distinct per-itinerary booking URL.
 func offerLine(o flights.FullOffer, args flights.Args, url string) map[string]any {
 	fo := toFullOfferJSON(o, args)
-	return map[string]any{
+	line := map[string]any{
 		"type":             "offer",
 		"price":            fo.Price,
 		"currency":         fo.Currency,
@@ -584,6 +588,10 @@ func offerLine(o flights.FullOffer, args flights.Args, url string) map[string]an
 		"dst_airport":      fo.DstAirport,
 		"flights":          fo.Flights,
 	}
+	if url != "" {
+		line["url"] = url
+	}
+	return line
 }
 
 func writeOffersText(w io.Writer, c commonOpts, args flights.Args, offers []flights.FullOffer, pr *flights.PriceRange, url string) {

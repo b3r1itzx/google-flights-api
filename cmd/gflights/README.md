@@ -87,8 +87,12 @@ Extra flags:
 |--------------|---------|------------------------------------------------------------------|
 | `--start`    | _req._  | `YYYY-MM-DD`. Range start (must be ≥ today).                     |
 | `--end`      | _req._  | `YYYY-MM-DD`. Within 161 days of `--start`.                      |
-| `--duration` | `7`     | Trip length in days.                                             |
+| `--duration` | `7`     | Trip length in days (round-trip only; ignored for one-way).     |
 | `--sort`     | `date`  | `date` \| `price`.                                               |
+
+Works for one-way too (`--trip-type one-way`): the cheapest fare per departure
+date, with no return. One-way offers have no `return` (blank in text, omitted
+in JSON/stream).
 
 Example:
 
@@ -97,6 +101,10 @@ gflights pricegraph \
   --from "New York" --to Rome \
   --start 2026-07-01 --end 2026-07-31 \
   --duration 15
+
+# one-way
+gflights pricegraph --from ORF --to BDL \
+  --start 2026-10-15 --end 2026-11-15 --trip-type one-way
 ```
 
 ### `offers`

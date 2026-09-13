@@ -71,7 +71,7 @@ type streamDeal struct {
 type streamFare struct {
 	Type     string  `json:"type"` // "fare"
 	Depart   string  `json:"depart"`
-	Return   string  `json:"return"`
+	Return   string  `json:"return,omitempty"` // absent for one-way
 	Price    float64 `json:"price"`
 	Currency string  `json:"currency"`
 }

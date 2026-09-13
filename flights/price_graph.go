@@ -106,8 +106,14 @@ func getPriceGraphSection(bytesToDecode []byte) ([]Offer, error) {
 		if finalOffer.StartDate, err = time.Parse("2006-01-02", startDate); err != nil {
 			continue
 		}
-		if finalOffer.ReturnDate, err = time.Parse("2006-01-02", returnDate); err != nil {
-			continue
+		// One-way price-graph offers have no return date (the field is null),
+		// e.g. ["2026-10-08",null,[[null,134],...],1]. Only parse and require a
+		// return date when one is present; otherwise keep the offer with a zero
+		// ReturnDate. Previously every one-way offer was dropped here.
+		if returnDate != "" {
+			if finalOffer.ReturnDate, err = time.Parse("2006-01-02", returnDate); err != nil {
+				continue
+			}
 		}
 
 		offers = append(offers, finalOffer)

@@ -161,6 +161,45 @@ func TestGetPriceGraphMock(t *testing.T) {
 	}
 }
 
+// TestGetPriceGraphSectionOneWay locks the one-way fix: one-way price-graph
+// offers carry a null return date (e.g. ["2026-10-08",null,[[null,134]],1]).
+// They must be kept with a zero ReturnDate, not dropped for lacking a return.
+func TestGetPriceGraphSectionOneWay(t *testing.T) {
+	raw := []byte(`[null,[["2026-10-08",null,[[null,134]],1],["2026-10-09",null,[[null,150]],1]]]`)
+	offers, err := getPriceGraphSection(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(offers) != 2 {
+		t.Fatalf("got %d one-way offers, want 2 (they must not be dropped for a missing return date)", len(offers))
+	}
+	if offers[0].Price != 134 {
+		t.Errorf("offer[0].Price = %v, want 134", offers[0].Price)
+	}
+	if !offers[0].StartDate.Equal(time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("offer[0].StartDate = %v", offers[0].StartDate)
+	}
+	if !offers[0].ReturnDate.IsZero() {
+		t.Errorf("offer[0].ReturnDate = %v, want zero for one-way", offers[0].ReturnDate)
+	}
+}
+
+// TestGetPriceGraphSectionRoundTrip is the control: a malformed/absent return
+// date is still required and a round-trip offer keeps its parsed return.
+func TestGetPriceGraphSectionRoundTrip(t *testing.T) {
+	raw := []byte(`[null,[["2026-10-08","2026-10-15",[[null,540]],1]]]`)
+	offers, err := getPriceGraphSection(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(offers) != 1 || offers[0].Price != 540 {
+		t.Fatalf("offers = %+v", offers)
+	}
+	if !offers[0].ReturnDate.Equal(time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("round-trip return date not parsed: %v", offers[0].ReturnDate)
+	}
+}
+
 func TestPriceGraphReqData(t *testing.T) {
 	session, err := New()
 	if err != nil {

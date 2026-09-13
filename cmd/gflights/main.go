@@ -247,6 +247,15 @@ func parseTripType(s string) (flights.TripType, error) {
 	return 0, fmt.Errorf("invalid --trip-type %q (want round-trip|one-way)", s)
 }
 
+// fmtDate formats a date as YYYY-MM-DD, or "" for a zero time — a one-way
+// price-graph offer has no return date.
+func fmtDate(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02")
+}
+
 func parseDate(s, flagName string) (time.Time, error) {
 	t, err := time.ParseInLocation("2006-01-02", s, time.UTC)
 	if err != nil {
@@ -350,7 +359,7 @@ FLAGS
 		for _, o := range offers {
 			nd.emit(streamFare{
 				Type: "fare", Depart: o.StartDate.Format("2006-01-02"),
-				Return: o.ReturnDate.Format("2006-01-02"), Price: o.Price, Currency: args.Currency.String(),
+				Return: fmtDate(o.ReturnDate), Price: o.Price, Currency: args.Currency.String(),
 			})
 		}
 		nd.emit(streamDone{Type: "done", Count: len(offers)})
@@ -377,7 +386,7 @@ func writePriceGraphText(w io.Writer, c commonOpts, args flights.PriceGraphArgs,
 	for i, o := range offers {
 		fmt.Fprintf(w, "%-12s  %-12s  %10.2f %s\n",
 			o.StartDate.Format("2006-01-02"),
-			o.ReturnDate.Format("2006-01-02"),
+			fmtDate(o.ReturnDate),
 			o.Price, args.Currency,
 		)
 		if i == 0 || o.Price < min {
@@ -401,7 +410,7 @@ type priceGraphJSON struct {
 
 type pgOfferJSON struct {
 	Depart   string  `json:"depart"`
-	Return   string  `json:"return"`
+	Return   string  `json:"return,omitempty"` // absent for one-way
 	Price    float64 `json:"price"`
 	Currency string  `json:"currency"`
 }
@@ -415,7 +424,7 @@ func writePriceGraphJSON(w io.Writer, c commonOpts, args flights.PriceGraphArgs,
 	for _, o := range offers {
 		out.Offers = append(out.Offers, pgOfferJSON{
 			Depart:   o.StartDate.Format("2006-01-02"),
-			Return:   o.ReturnDate.Format("2006-01-02"),
+			Return:   fmtDate(o.ReturnDate),
 			Price:    o.Price,
 			Currency: args.Currency.String(),
 		})
